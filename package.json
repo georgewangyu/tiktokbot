@@ -1,0 +1,17 @@
+{
+  "name": "tiktokbot",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "CLI for finding low-follower, high-view TikTok breakout videos.",
+  "bin": {
+    "tiktokbot": "./src/cli.js"
+  },
+  "scripts": {
+    "env": "node src/cli.js env",
+    "find": "node src/cli.js find",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "commander": "^14.0.3"
+  }
+}
