@@ -8,7 +8,7 @@ The useful broad-discovery path is TikTok Research API, not the Content Posting 
 
 For normal developer/creator usage, the official APIs are narrower:
 
-- Display API: OAuth-authorized user's own profile and videos.
+- Display API: OAuth-authorized user's own profile and videos. This is the practical official path for George's own TikTok analytics.
 - Content Posting API: posting/uploading.
 - Commercial Content API: commercial/ads transparency surfaces, not general creator breakout discovery.
 
@@ -52,6 +52,29 @@ If Research API access is not available:
 2. Build a watchlist of creators and hashtags.
 3. Add Display API for George's own account analytics.
 4. Add a public-page probe only after deciding the policy/risk tradeoff is acceptable.
+
+## Browser / Public Probe Workarounds
+
+Browser automation can help with public scouting, but it is a different risk profile than API access.
+
+Options:
+
+1. **Human-in-the-loop browser review**
+   - Use a browser to open TikTok search/profile pages.
+   - Human copies URL, creator, follower count, views, hook text.
+   - `tiktokbot score-file` ranks rows.
+   - Lowest risk and easiest to maintain.
+
+2. **Assisted browser extraction**
+   - Use Playwright/Puppeteer to navigate public pages and extract visible text/links/screenshots.
+   - Useful for watchlists and repeatable tabs.
+   - Brittle because TikTok markup and anti-bot behavior can change.
+
+3. **Unofficial/private API emulation**
+   - Highest coverage, highest breakage/policy risk.
+   - Do not make this the default path without an explicit decision.
+
+Recommended near-term: Display API for George's account plus human-in-the-loop/manual rows for competitor scouting.
 
 ## Product Boundary
 

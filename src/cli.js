@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { getEnv, loadApiConfig } from './credentials.js';
-import { findResearchOutliers, scoreManualFile } from './finder.js';
-import { fetchClientAccessToken } from './oauth.js';
+import { stdin, stdout } from 'process';
+import { createInterface } from 'readline/promises';
+import { getDefaultEnvFilePath, getEnv, loadApiConfig, loadOAuthConfig, loadUserTokens, writeEnvValues } from './credentials.js';
+import { findMyOutliers, findResearchOutliers, scoreManualFile } from './finder.js';
+import { buildAuthorizationUrl, createPkcePair, DEFAULT_DISPLAY_SCOPES, exchangeCodeForToken, fetchClientAccessToken, parseOAuthCallbackInput, refreshUserAccessToken } from './oauth.js';
 import { printResults } from './output.js';
-import { TikTokResearchClient } from './tiktok.js';
+import { getDisplayUserFields, TikTokDisplayClient, TikTokResearchClient } from './tiktok.js';
 
 const program = new Command();
 
@@ -25,6 +27,141 @@ program
     .name('tiktokbot')
     .description('TikTok breakout finder CLI for low-follower, high-view inspiration research')
     .version('0.1.0');
+
+program
+    .command('auth-url')
+    .description('Generate a TikTok Login Kit OAuth URL for Display API access')
+    .option('--redirect-uri <uri>', 'Override redirect URI')
+    .option('--scope <scopes>', 'Comma- or space-separated scopes', DEFAULT_DISPLAY_SCOPES.join(','))
+    .option('--state <value>', 'Explicit OAuth state value')
+    .option('--disable-auto-auth', 'Always show the TikTok authorization page')
+    .option('--pkce', 'Include a desktop-app PKCE challenge and print the verifier')
+    .action((options) => {
+        try {
+            const scopes = options.scope.split(/[,\s]+/).map((scope) => scope.trim()).filter(Boolean);
+            const pkce = options.pkce ? createPkcePair() : null;
+            const result = buildAuthorizationUrl({
+                redirectUri: options.redirectUri,
+                scopes,
+                state: options.state,
+                disableAutoAuth: options.disableAutoAuth,
+                codeChallenge: pkce?.challenge,
+            });
+            console.log(`State: ${result.state}`);
+            console.log(`Scopes: ${result.scopes.join(',')}`);
+            console.log(`Redirect URI: ${result.redirectUri}`);
+            if (pkce) console.log(`Code verifier: ${pkce.verifier}`);
+            console.log(result.url);
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('oauth-login')
+    .description('Run the TikTok Display API OAuth setup flow and optionally save user tokens')
+    .option('--redirect-uri <uri>', 'Override redirect URI')
+    .option('--scope <scopes>', 'Comma- or space-separated scopes', DEFAULT_DISPLAY_SCOPES.join(','))
+    .option('--state <value>', 'Explicit OAuth state value')
+    .option('--disable-auto-auth', 'Always show the TikTok authorization page')
+    .option('--env-file <path>', 'Env file to update when saving tokens', getDefaultEnvFilePath())
+    .option('--no-save', 'Print tokens without updating the env file')
+    .option('--no-pkce', 'Disable desktop-app PKCE parameters')
+    .action(async (options) => {
+        const rl = createInterface({ input: stdin, output: stdout });
+        try {
+            const scopes = options.scope.split(/[,\s]+/).map((scope) => scope.trim()).filter(Boolean);
+            const pkce = options.pkce ? createPkcePair() : null;
+            const auth = buildAuthorizationUrl({
+                redirectUri: options.redirectUri,
+                scopes,
+                state: options.state,
+                disableAutoAuth: options.disableAutoAuth,
+                codeChallenge: pkce?.challenge,
+            });
+
+            console.log(`Redirect URI: ${auth.redirectUri}`);
+            console.log(`Scopes: ${auth.scopes.join(',')}`);
+            console.log(`State: ${auth.state}`);
+            console.log('\nOpen this URL and authorize the TikTok account:\n');
+            console.log(auth.url);
+            const callbackInput = await rl.question('\nPaste the full callback URL or code: ');
+            const callback = parseOAuthCallbackInput(callbackInput);
+            if (callback.error) {
+                throw new Error(`TikTok OAuth callback error: ${callback.errorDescription || callback.error}`);
+            }
+            if (!callback.code) throw new Error('No authorization code found in callback input');
+            if (callback.state && callback.state !== auth.state) {
+                throw new Error(`OAuth state mismatch. Expected ${auth.state}, got ${callback.state}`);
+            }
+
+            const token = await exchangeCodeForToken({
+                code: callback.code,
+                redirectUri: options.redirectUri,
+                codeVerifier: pkce?.verifier,
+            });
+            printTokenSummary(token, { envFile: options.save ? options.envFile : '' });
+            if (options.save) {
+                const target = saveUserTokenEnv(token, options.envFile);
+                console.log(`\nSaved Display API tokens to ${target}`);
+            }
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exitCode = 1;
+        } finally {
+            rl.close();
+        }
+    });
+
+program
+    .command('exchange-code <code>')
+    .description('Exchange a TikTok OAuth authorization code for user tokens')
+    .option('--redirect-uri <uri>', 'Override redirect URI')
+    .option('--code-verifier <value>', 'PKCE code verifier for desktop/mobile app flows')
+    .option('--save', 'Save returned user tokens to an env file')
+    .option('--env-file <path>', 'Env file to update when saving tokens', getDefaultEnvFilePath())
+    .action(async (code, options) => {
+        try {
+            const callback = parseOAuthCallbackInput(code);
+            if (callback.error) {
+                throw new Error(`TikTok OAuth callback error: ${callback.errorDescription || callback.error}`);
+            }
+            const token = await exchangeCodeForToken({
+                code: callback.code,
+                redirectUri: options.redirectUri,
+                codeVerifier: options.codeVerifier,
+            });
+            printTokenSummary(token, { envFile: options.save ? options.envFile : '' });
+            if (options.save) {
+                const target = saveUserTokenEnv(token, options.envFile);
+                console.log(`\nSaved Display API tokens to ${target}`);
+            }
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('refresh-token')
+    .description('Refresh the TikTok user access token using TIKTOK_USER_REFRESH_TOKEN')
+    .option('--save', 'Save returned user tokens to an env file')
+    .option('--env-file <path>', 'Env file to update when saving tokens', getDefaultEnvFilePath())
+    .action(async (options) => {
+        try {
+            const tokens = loadUserTokens();
+            const token = await refreshUserAccessToken({ refreshToken: tokens.refreshToken });
+            printTokenSummary(token, { envFile: options.save ? options.envFile : '' });
+            if (options.save) {
+                const target = saveUserTokenEnv(token, options.envFile);
+                console.log(`\nSaved Display API tokens to ${target}`);
+            }
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
 
 program
     .command('client-token')
@@ -55,6 +192,73 @@ program
             const client = new TikTokResearchClient();
             const user = await client.queryUserInfo(username.replace(/^@/, ''));
             console.log(JSON.stringify(user, null, 2));
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('me')
+    .description('Fetch the OAuth-authorized TikTok account through Display API')
+    .option('--scope <scopes>', 'Scopes to use when choosing Display API fields; defaults to TIKTOK_USER_SCOPE')
+    .action(async (options) => {
+        try {
+            const tokens = loadUserTokens();
+            const client = new TikTokDisplayClient({ accessToken: tokens.accessToken });
+            const me = await client.getMe({ fields: getDisplayUserFields(options.scope || tokens.scope) });
+            console.log(JSON.stringify(me, null, 2));
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('my-videos')
+    .description('Fetch recent videos for the OAuth-authorized TikTok account through Display API')
+    .option('--max-results <number>', 'Maximum videos to fetch', parseInteger, 60)
+    .option('--format <format>', 'Output format: table, json, jsonl', 'json')
+    .action(async (options) => {
+        try {
+            const tokens = loadUserTokens();
+            const client = new TikTokDisplayClient({ accessToken: tokens.accessToken });
+            const videos = await client.listVideos({ maxResults: options.maxResults });
+            printResults(videos.map((video) => ({
+                ...video,
+                followers: null,
+                score: null,
+                viewsPerFollower: null,
+            })), options.format);
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('my-outliers')
+    .description('Rank recent videos for the OAuth-authorized TikTok account against its own baseline')
+    .option('--max-results <number>', 'Maximum videos to fetch', parseInteger, 60)
+    .option('--baseline-videos <number>', 'Recent videos to use for baseline', parseInteger, 12)
+    .option('--min-baseline-videos <number>', 'Minimum baseline videos needed for per-video baseline', parseInteger, 3)
+    .option('--min-views <number>', 'Minimum target video views', parseInteger)
+    .option('--limit <number>', 'Maximum rows to print', parseInteger, 20)
+    .option('--sort <sort>', 'Sort: score, outlier, views-per-follower, views, velocity, date, followers', 'outlier')
+    .option('--format <format>', 'Output format: table, json, jsonl', 'table')
+    .action(async (options) => {
+        try {
+            const tokens = loadUserTokens();
+            const results = await findMyOutliers({
+                accessToken: tokens.accessToken,
+                maxResults: options.maxResults,
+                baselineVideos: options.baselineVideos,
+                minBaselineVideos: options.minBaselineVideos,
+                minViews: options.minViews,
+                limit: options.limit,
+                sort: options.sort,
+            });
+            printResults(results, options.format);
         } catch (error) {
             console.error(`Error: ${error.message}`);
             process.exit(1);
@@ -137,6 +341,10 @@ program
             hasClientKey: Boolean(getEnv('TIKTOK_CLIENT_KEY')),
             hasClientSecret: Boolean(getEnv('TIKTOK_CLIENT_SECRET')),
             hasResearchAccessToken: Boolean(getEnv('TIKTOK_RESEARCH_ACCESS_TOKEN') || getEnv('TIKTOK_ACCESS_TOKEN')),
+            hasUserAccessToken: Boolean(getEnv('TIKTOK_USER_ACCESS_TOKEN') || getEnv('TIKTOK_ACCESS_TOKEN')),
+            hasUserRefreshToken: Boolean(getEnv('TIKTOK_USER_REFRESH_TOKEN') || getEnv('TIKTOK_REFRESH_TOKEN')),
+            userScope: getEnv('TIKTOK_USER_SCOPE') || null,
+            redirectUri: loadOAuthConfig().redirectUri,
             envFiles: [
                 'tiktokbot/.env',
                 '~/.config/tiktokbot/.env',
@@ -146,3 +354,26 @@ program
     });
 
 program.parse();
+
+function printTokenSummary(token, { envFile = '' } = {}) {
+    console.log(JSON.stringify({
+        token_type: token.token_type,
+        expires_in: token.expires_in,
+        refresh_expires_in: token.refresh_expires_in,
+        scope: token.scope,
+        open_id: token.open_id,
+        has_access_token: Boolean(token.access_token),
+        has_refresh_token: Boolean(token.refresh_token),
+    }, null, 2));
+    console.log(envFile ? `\nEnv values for ${envFile}:` : '\nSuggested env additions:');
+    if (token.access_token) console.log(`TIKTOK_USER_ACCESS_TOKEN=${token.access_token}`);
+    if (token.refresh_token) console.log(`TIKTOK_USER_REFRESH_TOKEN=${token.refresh_token}`);
+}
+
+function saveUserTokenEnv(token, envFile) {
+    return writeEnvValues(envFile, {
+        TIKTOK_USER_ACCESS_TOKEN: token.access_token,
+        TIKTOK_USER_REFRESH_TOKEN: token.refresh_token,
+        TIKTOK_USER_SCOPE: token.scope,
+    });
+}

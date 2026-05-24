@@ -59,7 +59,7 @@ For George's likely use case, assume Research API access is not available unless
 Practical tracks:
 
 1. **Manual worksheet scorer now**: collect creator/video rows manually and rank them with `score-file`.
-2. **Display API later**: OAuth into George's own TikTok account and analyze his own videos/baseline.
+2. **Display API now**: OAuth into George's own TikTok account and analyze his own videos/baseline.
 3. **Research API only if eligible**: academic/not-for-profit/public-interest application, with approval expected to take weeks.
 4. **Unofficial/public probing**: possible later, but separate because it is brittle and policy-sensitive.
 
@@ -70,6 +70,10 @@ Set these in `tiktokbot/.env`, `~/.config/tiktokbot/.env`, a file referenced by 
 ```env
 TIKTOK_CLIENT_KEY=...
 TIKTOK_CLIENT_SECRET=...
+TIKTOK_REDIRECT_URI=https://example.com/tiktok/callback
+TIKTOK_USER_ACCESS_TOKEN=...
+TIKTOK_USER_REFRESH_TOKEN=...
+TIKTOK_USER_SCOPE=user.info.basic,user.info.profile,user.info.stats,video.list
 TIKTOK_RESEARCH_ACCESS_TOKEN=...
 TIKTOK_OPEN_API_BASE_URL=https://open.tiktokapis.com
 ```
@@ -84,6 +88,30 @@ Fetch a client access token:
 
 ```bash
 node src/cli.js client-token
+```
+
+Generate a TikTok Login Kit authorization URL for Display API:
+
+```bash
+node src/cli.js auth-url
+```
+
+Run the guided OAuth flow and save returned user tokens to `tiktokbot/.env`:
+
+```bash
+node src/cli.js oauth-login
+```
+
+Or exchange the returned callback URL / `code` manually:
+
+```bash
+node src/cli.js exchange-code '<callback-url-or-code>' --save
+```
+
+Refresh a user token:
+
+```bash
+node src/cli.js refresh-token --save
 ```
 
 ## Usage
@@ -124,6 +152,24 @@ Inspect one creator:
 node src/cli.js user snackoverflowgeorge
 ```
 
+Inspect the OAuth-authorized account:
+
+```bash
+node src/cli.js me
+```
+
+Fetch the OAuth-authorized account's recent videos:
+
+```bash
+node src/cli.js my-videos --max-results 60 --format json
+```
+
+Rank the OAuth-authorized account's own video outliers:
+
+```bash
+node src/cli.js my-outliers --max-results 60 --baseline-videos 12
+```
+
 ## Scoring
 
 Primary signal when a manual worksheet has enough rows from the same creator:
@@ -146,6 +192,8 @@ engagement_proxy = (likes + comments * 5 + shares * 8) / views
 
 Default ranking prefers creator-baseline outliers, then views/follower, then engagement proxy.
 
+For `my-outliers`, the baseline is based on the authorized account's recent videos. This is the official-API equivalent of the useful part of `youtubebot`, but scoped to George's own TikTok account.
+
 ## Manual Worksheet Columns
 
 CSV, JSON, and JSONL are supported. Useful columns:
@@ -163,5 +211,6 @@ See `examples/manual-breakouts.csv`.
 ## Notes
 
 - Research API windows should stay at 30 days or less.
-- API approval is the main blocker, not local code.
+- Research API approval is the broad-discovery blocker, not local code.
+- Display API OAuth is the practical official path for George-owned analytics.
 - TikTok Content Posting API is separate and should be considered later for publishing, not discovery.

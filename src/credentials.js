@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -40,6 +40,11 @@ function getFileVars() {
     return fileVars;
 }
 
+export function getDefaultEnvFilePath() {
+    const dir = fileURLToPath(new URL('.', import.meta.url));
+    return resolve(dir, '..', '.env');
+}
+
 export function getEnv(key) {
     return process.env[key] || getFileVars()[key] || '';
 }
@@ -53,9 +58,58 @@ export function loadApiConfig(overrides = {}) {
     };
 }
 
+export function loadOAuthConfig(overrides = {}) {
+    return {
+        clientKey: overrides.clientKey || getEnv('TIKTOK_CLIENT_KEY'),
+        clientSecret: overrides.clientSecret || getEnv('TIKTOK_CLIENT_SECRET'),
+        redirectUri: overrides.redirectUri || getEnv('TIKTOK_REDIRECT_URI') || 'https://localhost/tiktok/callback',
+        baseUrl: overrides.baseUrl || getEnv('TIKTOK_OPEN_API_BASE_URL') || 'https://open.tiktokapis.com',
+    };
+}
+
+export function loadUserTokens() {
+    return {
+        accessToken: getEnv('TIKTOK_USER_ACCESS_TOKEN') || getEnv('TIKTOK_ACCESS_TOKEN'),
+        refreshToken: getEnv('TIKTOK_USER_REFRESH_TOKEN') || getEnv('TIKTOK_REFRESH_TOKEN'),
+        scope: getEnv('TIKTOK_USER_SCOPE'),
+    };
+}
+
 export function requireEnv(keys) {
     const missing = keys.filter((key) => !getEnv(key));
     if (missing.length) {
         throw new Error(`Missing credentials: ${missing.join(', ')}`);
     }
+}
+
+export function writeEnvValues(filePath, values) {
+    const target = filePath || getDefaultEnvFilePath();
+    const existing = existsSync(target) ? readFileSync(target, 'utf8') : '';
+    const lines = existing ? existing.split('\n') : [];
+    const pending = new Map(Object.entries(values).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+    const output = lines.map((line) => {
+        const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
+        if (!match || !pending.has(match[1])) return line;
+        const key = match[1];
+        const value = pending.get(key);
+        pending.delete(key);
+        return `${key}=${escapeEnvValue(value)}`;
+    });
+
+    if (output.length && output.at(-1) !== '') output.push('');
+    for (const [key, value] of pending) {
+        output.push(`${key}=${escapeEnvValue(value)}`);
+    }
+
+    writeFileSync(target, output.join('\n').replace(/\n*$/, '\n'));
+    fileVars = null;
+    return target;
+}
+
+function escapeEnvValue(value) {
+    const text = String(value);
+    if (!text || /[\s"'#]/.test(text)) {
+        return JSON.stringify(text);
+    }
+    return text;
 }

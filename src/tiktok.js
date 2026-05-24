@@ -17,14 +17,25 @@ const DEFAULT_VIDEO_FIELDS = [
 ];
 
 const DEFAULT_USER_FIELDS = [
+    'open_id',
+    'union_id',
+    'username',
     'display_name',
     'bio_description',
     'avatar_url',
+    'profile_deep_link',
     'is_verified',
     'follower_count',
     'following_count',
     'likes_count',
     'video_count',
+];
+
+const BASIC_DISPLAY_USER_FIELDS = [
+    'open_id',
+    'union_id',
+    'avatar_url',
+    'display_name',
 ];
 
 export class TikTokResearchClient {
@@ -115,6 +126,96 @@ export class TikTokResearchClient {
     }
 }
 
+const DEFAULT_DISPLAY_VIDEO_FIELDS = [
+    'id',
+    'create_time',
+    'share_url',
+    'video_description',
+    'duration',
+    'title',
+    'like_count',
+    'comment_count',
+    'share_count',
+    'view_count',
+];
+
+export class TikTokDisplayClient {
+    constructor({ accessToken, baseUrl } = {}) {
+        this.accessToken = accessToken;
+        this.baseUrl = baseUrl || loadApiConfig().baseUrl || 'https://open.tiktokapis.com';
+        if (!this.accessToken) {
+            throw new Error('Missing credentials: TIKTOK_USER_ACCESS_TOKEN');
+        }
+    }
+
+    async request(path, { method = 'GET', query = {}, body } = {}) {
+        const url = new URL(path, this.baseUrl);
+        for (const [key, value] of Object.entries(query)) {
+            if (value === undefined || value === null || value === '') continue;
+            url.searchParams.set(key, String(value));
+        }
+
+        const response = await fetch(url, {
+            method,
+            headers: {
+                Authorization: `Bearer ${this.accessToken}`,
+                ...(body ? { 'Content-Type': 'application/json' } : {}),
+            },
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const message = json?.error?.message || json?.error_description || json?.message || `${response.status} ${response.statusText}`;
+            throw new Error(`TikTok Display API error for ${path}: ${message}`);
+        }
+        return json;
+    }
+
+    async getMe({ fields = DEFAULT_USER_FIELDS } = {}) {
+        const page = await this.request('/v2/user/info/', {
+            query: { fields: fields.join(',') },
+        });
+        return mapDisplayUser(page?.data?.user || {});
+    }
+
+    async listVideos({ maxResults = 60, fields = DEFAULT_DISPLAY_VIDEO_FIELDS } = {}) {
+        const videos = [];
+        let cursor = undefined;
+        let hasMore = true;
+
+        while (videos.length < maxResults && hasMore) {
+            const maxCount = Math.min(20, maxResults - videos.length);
+            const body = { max_count: maxCount };
+            if (cursor !== undefined) body.cursor = cursor;
+
+            const page = await this.request('/v2/video/list/', {
+                method: 'POST',
+                query: { fields: fields.join(',') },
+                body,
+            });
+
+            const data = page?.data || {};
+            videos.push(...(data.videos || []).map(mapDisplayVideo));
+            cursor = data.cursor;
+            hasMore = Boolean(data.has_more);
+        }
+
+        return videos.slice(0, maxResults);
+    }
+}
+
+export function getDisplayUserFields(scope = '') {
+    const scopes = new Set(String(scope).split(/[,\s]+/).map((item) => item.trim()).filter(Boolean));
+    const fields = [...BASIC_DISPLAY_USER_FIELDS];
+    if (scopes.has('user.info.profile')) {
+        fields.push('bio_description', 'profile_deep_link', 'is_verified');
+    }
+    if (scopes.has('user.info.stats')) {
+        fields.push('follower_count', 'following_count', 'likes_count', 'video_count');
+    }
+    return fields;
+}
+
 function buildConditions({ query, field, regionCode, minViews }) {
     const conditions = [];
     if (query) {
@@ -141,10 +242,35 @@ function buildConditions({ query, field, regionCode, minViews }) {
     return conditions;
 }
 
+function usernameFromShareUrl(shareUrl) {
+    if (!shareUrl) return '';
+    const match = String(shareUrl).match(/tiktok\.com\/@([^/]+)/);
+    return match ? match[1] : '';
+}
+
 function isoFromCreateTime(createTime) {
     const seconds = toNumber(createTime, null);
     if (!seconds) return '';
     return new Date(seconds * 1000).toISOString();
+}
+
+function mapDisplayVideo(item) {
+    const id = item.id || '';
+    const creator = usernameFromShareUrl(item.share_url);
+    return {
+        platform: 'tiktok',
+        id,
+        url: item.share_url || (creator && id ? `https://www.tiktok.com/@${creator}/video/${id}` : ''),
+        creator,
+        caption: item.video_description || item.title || '',
+        views: toNumber(item.view_count),
+        likes: toNumber(item.like_count),
+        comments: toNumber(item.comment_count),
+        shares: toNumber(item.share_count),
+        postedAt: isoFromCreateTime(item.create_time),
+        durationSeconds: toNumber(item.duration, null),
+        source: 'tiktok_display_api',
+    };
 }
 
 function mapResearchVideo(item) {
@@ -165,6 +291,23 @@ function mapResearchVideo(item) {
         hashtags: item.hashtag_names || [],
         regionCode: item.region_code || '',
         source: 'tiktok_research_api',
+    };
+}
+
+function mapDisplayUser(data) {
+    return {
+        openId: data.open_id || '',
+        unionId: data.union_id || '',
+        username: data.username || '',
+        displayName: data.display_name || '',
+        followers: toNumber(data.follower_count),
+        following: toNumber(data.following_count),
+        likes: toNumber(data.likes_count),
+        videoCount: toNumber(data.video_count),
+        isVerified: Boolean(data.is_verified),
+        bio: data.bio_description || '',
+        avatarUrl: data.avatar_url || '',
+        profileUrl: data.profile_deep_link || '',
     };
 }
 

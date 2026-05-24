@@ -1,6 +1,6 @@
 import { loadManualRows } from './manual.js';
 import { computeBaseline, formatNumber, scoreVideo } from './scoring.js';
-import { TikTokResearchClient } from './tiktok.js';
+import { TikTokDisplayClient, TikTokResearchClient } from './tiktok.js';
 
 function yyyymmdd(date) {
     const year = date.getUTCFullYear();
@@ -113,6 +113,36 @@ export function scoreManualRows(rows, options = {}) {
         maxFollowers: options.maxFollowers,
         minViews: options.minViews,
         minViewsPerFollower: options.minViewsPerFollower,
+        limit: options.limit ?? 20,
+        sort: options.sort ?? 'score',
+    });
+}
+
+export async function findMyOutliers(options = {}) {
+    const client = options.client || new TikTokDisplayClient({ accessToken: options.accessToken });
+    const [me, videos] = await Promise.all([
+        client.getMe(),
+        client.listVideos({ maxResults: options.maxResults ?? 60 }),
+    ]);
+
+    const baselineViews = computeBaseline(videos.slice(0, options.baselineVideos ?? 12), options.baselineMethod);
+    const rows = videos.map((video) => ({
+        ...video,
+        creator: video.creator || me.username,
+        followers: me.followers,
+    }));
+
+    const baselineByRow = new Map(rows.map((row) => {
+        const others = rows
+            .filter((item) => item.id !== row.id && item.views > 0)
+            .slice(0, options.baselineVideos ?? 12);
+        return [row, others.length >= (options.minBaselineVideos ?? 3) ? computeBaseline(others, options.baselineMethod) : baselineViews];
+    }));
+
+    return rankRows(rows, {
+        creatorsByUsername: new Map([[me.username, { username: me.username, followers: me.followers }]]),
+        baselineByRow,
+        minViews: options.minViews,
         limit: options.limit ?? 20,
         sort: options.sort ?? 'score',
     });
