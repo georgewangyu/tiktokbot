@@ -7,6 +7,7 @@ import { getDefaultEnvFilePath, getEnv, loadApiConfig, loadOAuthConfig, loadUser
 import { findMyOutliers, findResearchOutliers, rankRows, scoreManualFile } from './finder.js';
 import { buildAuthorizationUrl, createPkcePair, DEFAULT_DISPLAY_SCOPES, exchangeCodeForToken, fetchClientAccessToken, parseOAuthCallbackInput, refreshUserAccessToken } from './oauth.js';
 import { printResults } from './output.js';
+import { collectWithPythonBridge } from './pythonBridge.js';
 import { getDisplayUserFields, TikTokDisplayClient, TikTokResearchClient } from './tiktok.js';
 import { withTikTokWebClient } from './web.js';
 
@@ -27,6 +28,25 @@ function parseFloatOption(value) {
 function parseBoolean(value) {
     if (value === true || value === false) return value;
     return !['0', 'false', 'no', 'off'].includes(String(value).toLowerCase());
+}
+
+async function collectWebVideos({ backend = 'auto', command, query, maxResults, msToken, browser, headless }) {
+    const useNode = () => withTikTokWebClient({ msToken, browser, headless }, (client) => {
+        if (command === 'search') return client.searchVideos({ query, maxResults });
+        return client.trendingVideos({ maxResults });
+    });
+
+    if (backend === 'node') return useNode();
+    if (backend === 'python') {
+        return collectWithPythonBridge({ command, query, maxResults, msToken, browser, headless });
+    }
+
+    try {
+        return await collectWithPythonBridge({ command, query, maxResults, msToken, browser, headless });
+    } catch (error) {
+        if (!/No module named|ModuleNotFoundError|Failed to run Python/.test(error.message)) throw error;
+        return useNode();
+    }
 }
 
 program
@@ -370,16 +390,18 @@ program
     .option('--ms-token <value>', 'TikTok msToken cookie value; defaults to TIKTOK_MS_TOKEN or ms_token env')
     .option('--browser <browser>', 'Playwright browser: chromium, firefox, webkit', 'chromium')
     .option('--headless <bool>', 'Run browser headless; use false if TikTok blocks the session', parseBoolean, true)
+    .option('--backend <backend>', 'Web collection backend: auto, python, node', 'auto')
     .action(async (query, options) => {
         try {
-            const videos = await withTikTokWebClient({
+            const videos = await collectWebVideos({
+                backend: options.backend,
+                command: 'search',
+                query,
+                maxResults: options.maxResults,
                 msToken: options.msToken,
                 browser: options.browser,
                 headless: options.headless,
-            }, (client) => client.searchVideos({
-                query,
-                maxResults: options.maxResults,
-            }));
+            });
             const results = rankRows(videos, {
                 maxFollowers: options.maxFollowers,
                 minViews: options.minViews,
@@ -407,15 +429,17 @@ program
     .option('--ms-token <value>', 'TikTok msToken cookie value; defaults to TIKTOK_MS_TOKEN or ms_token env')
     .option('--browser <browser>', 'Playwright browser: chromium, firefox, webkit', 'chromium')
     .option('--headless <bool>', 'Run browser headless; use false if TikTok blocks the session', parseBoolean, true)
+    .option('--backend <backend>', 'Web collection backend: auto, python, node', 'auto')
     .action(async (options) => {
         try {
-            const videos = await withTikTokWebClient({
+            const videos = await collectWebVideos({
+                backend: options.backend,
+                command: 'trending',
+                maxResults: options.maxResults,
                 msToken: options.msToken,
                 browser: options.browser,
                 headless: options.headless,
-            }, (client) => client.trendingVideos({
-                maxResults: options.maxResults,
-            }));
+            });
             const results = rankRows(videos, {
                 maxFollowers: options.maxFollowers,
                 minViews: options.minViews,
@@ -469,6 +493,7 @@ program
             hasUserRefreshToken: Boolean(getEnv('TIKTOK_USER_REFRESH_TOKEN') || getEnv('TIKTOK_REFRESH_TOKEN')),
             userScope: getEnv('TIKTOK_USER_SCOPE') || null,
             hasMsToken: Boolean(getEnv('TIKTOK_MS_TOKEN') || getEnv('ms_token')),
+            pythonBin: getEnv('TIKTOK_PYTHON_BIN') || 'python3',
             redirectUri: loadOAuthConfig().redirectUri,
             envFiles: [
                 'tiktokbot/.env',

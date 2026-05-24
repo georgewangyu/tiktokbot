@@ -79,6 +79,7 @@ TIKTOK_RESEARCH_ACCESS_TOKEN=...
 TIKTOK_OPEN_API_BASE_URL=https://open.tiktokapis.com
 TIKTOK_MS_TOKEN=...
 TIKTOK_WEB_BROWSER=chromium
+TIKTOK_PYTHON_BIN=python3
 ```
 
 `TIKTOK_MS_TOKEN` is optional for `web-trending`, but usually needed for `web-search`. To get it, open TikTok in your browser, log in, perform one normal search, then copy the `msToken` cookie value for `www.tiktok.com` / `.tiktok.com` into your private `.env`. Do not commit it.
@@ -196,7 +197,24 @@ Fetch public trending/FYP-style videos with the same scorer:
 node src/cli.js web-trending --max-results 30 --sort views-per-follower
 ```
 
-`web-search` and `web-trending` are unofficial scraping adapters inspired by `davidteather/TikTok-Api`. They use Playwright to initialize a TikTok web session, sign TikTok web URLs with the in-page `X-Bogus` signer, then call TikTok web JSON endpoints and normalize rows into the same scoring pipeline. `web-trending` may work without `TIKTOK_MS_TOKEN`; `web-search` often requires a real TikTok `msToken` cookie from a browser session that has already used search. If blocked, set `TIKTOK_MS_TOKEN`, try `--headless false`, or treat the run as a brittle research probe rather than a guaranteed API.
+`web-search` and `web-trending` are unofficial scraping adapters inspired by `davidteather/TikTok-Api`. By default, `--backend auto` uses the Python `TikTokApi` package when available, because it currently handles TikTok's stealth/session requirements better than the native Node adapter. The Node adapter remains available with `--backend node`.
+
+Set up the Python backend:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+python -m playwright install chromium
+```
+
+Then either run commands from that activated shell or set:
+
+```env
+TIKTOK_PYTHON_BIN=.venv/bin/python
+```
+
+`web-trending` may work without `TIKTOK_MS_TOKEN`; `web-search` often requires a real TikTok `msToken` cookie from a browser session that has already used search. If blocked, set `TIKTOK_MS_TOKEN`, try `--headless false`, or treat the run as a brittle research probe rather than a guaranteed API.
 
 ## Scoring
 

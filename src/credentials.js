@@ -80,6 +80,7 @@ export function loadWebConfig(overrides = {}) {
         msToken: overrides.msToken || getEnv('TIKTOK_MS_TOKEN') || getEnv('ms_token'),
         browser: overrides.browser || getEnv('TIKTOK_WEB_BROWSER') || 'chromium',
         headless: overrides.headless,
+        pythonBin: overrides.pythonBin || getEnv('TIKTOK_PYTHON_BIN') || 'python3',
     };
 }
 

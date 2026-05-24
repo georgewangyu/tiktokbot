@@ -80,7 +80,9 @@ Recommended near-term: Display API for George's account plus human-in-the-loop/m
 
 `web-search` and `web-trending` use the same broad pattern as
 `davidteather/TikTok-Api`: initialize a browser session with Playwright, then
-sign and call TikTok web JSON endpoints from that session.
+sign and call TikTok web JSON endpoints from that session. The CLI defaults to
+`--backend auto`, which uses the Python `TikTokApi` package when available and
+falls back to the native Node adapter only when the Python bridge is missing.
 
 Useful endpoints observed in local testing:
 
@@ -111,6 +113,9 @@ Limitations:
 - `web-search` is more sensitive. It may return an empty response unless
   `TIKTOK_MS_TOKEN` comes from a browser session that has already used TikTok
   search.
+- The native Node adapter does not yet fully match the Python package's stealth
+  behavior; use `--backend python` for search when the Python dependencies are
+  installed.
 - Profile/recent-video fetches are more likely to require a stronger browser
   session, a non-headless run, or proxies.
 - Treat this adapter as an experimental research source, not as a reliable
