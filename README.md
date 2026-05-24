@@ -35,7 +35,8 @@ tiktokbot/
 |   |-- oauth.js         # TikTok client credentials token helper
 |   |-- output.js        # Table/JSON/JSONL output
 |   |-- scoring.js       # Baseline, views/follower, velocity scoring
-|   `-- tiktok.js        # TikTok Research API client
+|   |-- tiktok.js        # TikTok official API clients
+|   `-- web.js           # Experimental Playwright-backed public web adapter
 |-- setup/
 |   `-- TIKTOK_API_SETUP.md
 |-- research/
@@ -61,7 +62,7 @@ Practical tracks:
 1. **Manual worksheet scorer now**: collect creator/video rows manually and rank them with `score-file`.
 2. **Display API now**: OAuth into George's own TikTok account and analyze his own videos/baseline.
 3. **Research API only if eligible**: academic/not-for-profit/public-interest application, with approval expected to take weeks.
-4. **Unofficial/public probing**: possible later, but separate because it is brittle and policy-sensitive.
+4. **Unofficial/public probing**: Playwright-backed web search/trending is available as an experimental path, but it is brittle and policy-sensitive.
 
 ## Credentials
 
@@ -76,7 +77,11 @@ TIKTOK_USER_REFRESH_TOKEN=...
 TIKTOK_USER_SCOPE=user.info.basic,user.info.profile,user.info.stats,video.list
 TIKTOK_RESEARCH_ACCESS_TOKEN=...
 TIKTOK_OPEN_API_BASE_URL=https://open.tiktokapis.com
+TIKTOK_MS_TOKEN=...
+TIKTOK_WEB_BROWSER=chromium
 ```
+
+`TIKTOK_MS_TOKEN` is optional for `web-trending`, but usually needed for `web-search`. To get it, open TikTok in your browser, log in, perform one normal search, then copy the `msToken` cookie value for `www.tiktok.com` / `.tiktok.com` into your private `.env`. Do not commit it.
 
 Check config:
 
@@ -169,6 +174,29 @@ Rank the OAuth-authorized account's own video outliers:
 ```bash
 node src/cli.js my-outliers --max-results 60 --baseline-videos 12
 ```
+
+Run the daily-style own-account check: follower count plus recent videos above a creator-baseline multiplier:
+
+```bash
+node src/cli.js check --min-outlier 2 --max-results 60
+```
+
+Experimentally search public TikTok web results through a Playwright-backed web session:
+
+```bash
+node src/cli.js web-search "software engineer" \
+  --max-results 30 \
+  --min-views-per-follower 5 \
+  --format table
+```
+
+Fetch public trending/FYP-style videos with the same scorer:
+
+```bash
+node src/cli.js web-trending --max-results 30 --sort views-per-follower
+```
+
+`web-search` and `web-trending` are unofficial scraping adapters inspired by `davidteather/TikTok-Api`. They use Playwright to initialize a TikTok web session, sign TikTok web URLs with the in-page `X-Bogus` signer, then call TikTok web JSON endpoints and normalize rows into the same scoring pipeline. `web-trending` may work without `TIKTOK_MS_TOKEN`; `web-search` often requires a real TikTok `msToken` cookie from a browser session that has already used search. If blocked, set `TIKTOK_MS_TOKEN`, try `--headless false`, or treat the run as a brittle research probe rather than a guaranteed API.
 
 ## Scoring
 

@@ -76,6 +76,46 @@ Options:
 
 Recommended near-term: Display API for George's account plus human-in-the-loop/manual rows for competitor scouting.
 
+## Experimental TikTok Web Adapter
+
+`web-search` and `web-trending` use the same broad pattern as
+`davidteather/TikTok-Api`: initialize a browser session with Playwright, then
+sign and call TikTok web JSON endpoints from that session.
+
+Useful endpoints observed in local testing:
+
+- `/api/search/item/full/` for keyword video search
+- `/api/recommend/item_list/` for trending/FYP-style videos
+
+Search result payloads include:
+
+- `stats.playCount`
+- `stats.diggCount`
+- `stats.commentCount`
+- `stats.shareCount`
+- `author.uniqueId`
+- `authorStats.followerCount`
+
+That is enough for the YouTube-bot-style fallback signal:
+
+```text
+views_per_follower = stats.playCount / authorStats.followerCount
+```
+
+Limitations:
+
+- This is not an official API and can break or get blocked.
+- `msToken` is a TikTok browser cookie, not an OAuth token. It should be kept
+  in `.env` as `TIKTOK_MS_TOKEN` and never committed.
+- `web-trending` can work without `msToken` in local testing.
+- `web-search` is more sensitive. It may return an empty response unless
+  `TIKTOK_MS_TOKEN` comes from a browser session that has already used TikTok
+  search.
+- Profile/recent-video fetches are more likely to require a stronger browser
+  session, a non-headless run, or proxies.
+- Treat this adapter as an experimental research source, not as a reliable
+  unattended production dependency.
+
 ## Product Boundary
 
 This bot should find and rank candidate concepts. It should not auto-post.

@@ -75,6 +75,14 @@ export function loadUserTokens() {
     };
 }
 
+export function loadWebConfig(overrides = {}) {
+    return {
+        msToken: overrides.msToken || getEnv('TIKTOK_MS_TOKEN') || getEnv('ms_token'),
+        browser: overrides.browser || getEnv('TIKTOK_WEB_BROWSER') || 'chromium',
+        headless: overrides.headless,
+    };
+}
+
 export function requireEnv(keys) {
     const missing = keys.filter((key) => !getEnv(key));
     if (missing.length) {

@@ -143,12 +143,13 @@ export async function findMyOutliers(options = {}) {
         creatorsByUsername: new Map([[me.username, { username: me.username, followers: me.followers }]]),
         baselineByRow,
         minViews: options.minViews,
+        minOutlierScore: options.minOutlierScore,
         limit: options.limit ?? 20,
         sort: options.sort ?? 'score',
     });
 }
 
-function rankRows(rows, options) {
+export function rankRows(rows, options = {}) {
     const results = [];
     for (const row of rows) {
         const creator = options.creatorsByUsername?.get(row.creator) || {
@@ -167,6 +168,10 @@ function rankRows(rows, options) {
         if (
             options.minViewsPerFollower !== undefined &&
             (score.viewsPerFollower || 0) < options.minViewsPerFollower
+        ) continue;
+        if (
+            options.minOutlierScore !== undefined &&
+            (score.outlierScore || 0) < options.minOutlierScore
         ) continue;
 
         results.push({

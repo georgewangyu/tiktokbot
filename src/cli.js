@@ -4,10 +4,11 @@ import { Command } from 'commander';
 import { stdin, stdout } from 'process';
 import { createInterface } from 'readline/promises';
 import { getDefaultEnvFilePath, getEnv, loadApiConfig, loadOAuthConfig, loadUserTokens, writeEnvValues } from './credentials.js';
-import { findMyOutliers, findResearchOutliers, scoreManualFile } from './finder.js';
+import { findMyOutliers, findResearchOutliers, rankRows, scoreManualFile } from './finder.js';
 import { buildAuthorizationUrl, createPkcePair, DEFAULT_DISPLAY_SCOPES, exchangeCodeForToken, fetchClientAccessToken, parseOAuthCallbackInput, refreshUserAccessToken } from './oauth.js';
 import { printResults } from './output.js';
 import { getDisplayUserFields, TikTokDisplayClient, TikTokResearchClient } from './tiktok.js';
+import { withTikTokWebClient } from './web.js';
 
 const program = new Command();
 
@@ -21,6 +22,11 @@ function parseFloatOption(value) {
     const parsed = Number.parseFloat(value);
     if (!Number.isFinite(parsed)) throw new Error(`Invalid number: ${value}`);
     return parsed;
+}
+
+function parseBoolean(value) {
+    if (value === true || value === false) return value;
+    return !['0', 'false', 'no', 'off'].includes(String(value).toLowerCase());
 }
 
 program
@@ -243,6 +249,7 @@ program
     .option('--baseline-videos <number>', 'Recent videos to use for baseline', parseInteger, 12)
     .option('--min-baseline-videos <number>', 'Minimum baseline videos needed for per-video baseline', parseInteger, 3)
     .option('--min-views <number>', 'Minimum target video views', parseInteger)
+    .option('--min-outlier <number>', 'Minimum creator-baseline multiplier', parseFloatOption)
     .option('--limit <number>', 'Maximum rows to print', parseInteger, 20)
     .option('--sort <sort>', 'Sort: score, outlier, views-per-follower, views, velocity, date, followers', 'outlier')
     .option('--format <format>', 'Output format: table, json, jsonl', 'table')
@@ -255,10 +262,54 @@ program
                 baselineVideos: options.baselineVideos,
                 minBaselineVideos: options.minBaselineVideos,
                 minViews: options.minViews,
+                minOutlierScore: options.minOutlier,
                 limit: options.limit,
                 sort: options.sort,
             });
             printResults(results, options.format);
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('check')
+    .description('Show the authorized account follower count and recent videos above an outlier threshold')
+    .option('--max-results <number>', 'Maximum recent videos to fetch', parseInteger, 60)
+    .option('--baseline-videos <number>', 'Recent videos to use for baseline', parseInteger, 12)
+    .option('--min-baseline-videos <number>', 'Minimum baseline videos needed for per-video baseline', parseInteger, 3)
+    .option('--min-views <number>', 'Minimum target video views', parseInteger)
+    .option('--min-outlier <number>', 'Minimum creator-baseline multiplier', parseFloatOption, 2)
+    .option('--limit <number>', 'Maximum rows to print', parseInteger, 10)
+    .option('--format <format>', 'Output format: table or json', 'table')
+    .action(async (options) => {
+        try {
+            const tokens = loadUserTokens();
+            const client = new TikTokDisplayClient({ accessToken: tokens.accessToken });
+            const [me, results] = await Promise.all([
+                client.getMe({ fields: getDisplayUserFields(tokens.scope) }),
+                findMyOutliers({
+                    client,
+                    maxResults: options.maxResults,
+                    baselineVideos: options.baselineVideos,
+                    minBaselineVideos: options.minBaselineVideos,
+                    minViews: options.minViews,
+                    minOutlierScore: options.minOutlier,
+                    limit: options.limit,
+                    sort: 'outlier',
+                }),
+            ]);
+
+            if (options.format === 'json') {
+                console.log(JSON.stringify({ account: me, outliers: results }, null, 2));
+                return;
+            }
+
+            const handle = me.username || me.displayName ? `@${me.username || me.displayName}` : 'authorized account';
+            console.log(`${handle}: ${me.followers?.toLocaleString?.() ?? '-'} followers, ${me.videoCount?.toLocaleString?.() ?? '-'} videos, ${me.likes?.toLocaleString?.() ?? '-'} likes`);
+            console.log(`Recent videos above ${options.minOutlier}x creator baseline:`);
+            printResults(results, 'table');
         } catch (error) {
             console.error(`Error: ${error.message}`);
             process.exit(1);
@@ -307,6 +358,79 @@ program
     });
 
 program
+    .command('web-search <query>')
+    .description('Experimentally search public TikTok web results using Playwright session scraping')
+    .option('--max-results <number>', 'Maximum TikTok videos to inspect', parseInteger, 30)
+    .option('--limit <number>', 'Maximum rows to print', parseInteger, 20)
+    .option('--max-followers <number>', 'Maximum creator followers', parseInteger)
+    .option('--min-views <number>', 'Minimum target video views', parseInteger)
+    .option('--min-views-per-follower <number>', 'Minimum views/followers ratio', parseFloatOption)
+    .option('--sort <sort>', 'Sort: score, outlier, views-per-follower, views, velocity, date, followers', 'views-per-follower')
+    .option('--format <format>', 'Output format: table, json, jsonl', 'table')
+    .option('--ms-token <value>', 'TikTok msToken cookie value; defaults to TIKTOK_MS_TOKEN or ms_token env')
+    .option('--browser <browser>', 'Playwright browser: chromium, firefox, webkit', 'chromium')
+    .option('--headless <bool>', 'Run browser headless; use false if TikTok blocks the session', parseBoolean, true)
+    .action(async (query, options) => {
+        try {
+            const videos = await withTikTokWebClient({
+                msToken: options.msToken,
+                browser: options.browser,
+                headless: options.headless,
+            }, (client) => client.searchVideos({
+                query,
+                maxResults: options.maxResults,
+            }));
+            const results = rankRows(videos, {
+                maxFollowers: options.maxFollowers,
+                minViews: options.minViews,
+                minViewsPerFollower: options.minViewsPerFollower,
+                limit: options.limit,
+                sort: options.sort,
+            });
+            printResults(results, options.format);
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('web-trending')
+    .description('Experimentally fetch public TikTok trending/FYP videos using Playwright session scraping')
+    .option('--max-results <number>', 'Maximum TikTok videos to inspect', parseInteger, 30)
+    .option('--limit <number>', 'Maximum rows to print', parseInteger, 20)
+    .option('--max-followers <number>', 'Maximum creator followers', parseInteger)
+    .option('--min-views <number>', 'Minimum target video views', parseInteger)
+    .option('--min-views-per-follower <number>', 'Minimum views/followers ratio', parseFloatOption)
+    .option('--sort <sort>', 'Sort: score, outlier, views-per-follower, views, velocity, date, followers', 'views-per-follower')
+    .option('--format <format>', 'Output format: table, json, jsonl', 'table')
+    .option('--ms-token <value>', 'TikTok msToken cookie value; defaults to TIKTOK_MS_TOKEN or ms_token env')
+    .option('--browser <browser>', 'Playwright browser: chromium, firefox, webkit', 'chromium')
+    .option('--headless <bool>', 'Run browser headless; use false if TikTok blocks the session', parseBoolean, true)
+    .action(async (options) => {
+        try {
+            const videos = await withTikTokWebClient({
+                msToken: options.msToken,
+                browser: options.browser,
+                headless: options.headless,
+            }, (client) => client.trendingVideos({
+                maxResults: options.maxResults,
+            }));
+            const results = rankRows(videos, {
+                maxFollowers: options.maxFollowers,
+                minViews: options.minViews,
+                minViewsPerFollower: options.minViewsPerFollower,
+                limit: options.limit,
+                sort: options.sort,
+            });
+            printResults(results, options.format);
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
     .command('score-file <path>')
     .description('Score a manually collected CSV, JSON, or JSONL worksheet')
     .option('--limit <number>', 'Maximum rows to print', parseInteger, 20)
@@ -344,6 +468,7 @@ program
             hasUserAccessToken: Boolean(getEnv('TIKTOK_USER_ACCESS_TOKEN') || getEnv('TIKTOK_ACCESS_TOKEN')),
             hasUserRefreshToken: Boolean(getEnv('TIKTOK_USER_REFRESH_TOKEN') || getEnv('TIKTOK_REFRESH_TOKEN')),
             userScope: getEnv('TIKTOK_USER_SCOPE') || null,
+            hasMsToken: Boolean(getEnv('TIKTOK_MS_TOKEN') || getEnv('ms_token')),
             redirectUri: loadOAuthConfig().redirectUri,
             envFiles: [
                 'tiktokbot/.env',
