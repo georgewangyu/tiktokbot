@@ -34,6 +34,7 @@ export class TikTokWebClient {
         this.config = { ...loadWebConfig(), ...config };
         this.browserName = this.config.browser || 'chromium';
         this.headless = this.config.headless !== undefined ? this.config.headless : true;
+        this.muteAudio = this.config.muteAudio !== undefined ? this.config.muteAudio : true;
         this.msToken = this.config.msToken || '';
         this.browser = null;
         this.context = null;
@@ -47,12 +48,38 @@ export class TikTokWebClient {
         const browserType = BROWSERS[this.browserName];
         if (!browserType) throw new Error(`Unsupported browser: ${this.browserName}`);
 
-        this.browser = await browserType.launch({ headless: this.headless });
+        const launchOptions = { headless: this.headless };
+        if (this.muteAudio && this.browserName === 'chromium') {
+            launchOptions.args = ['--mute-audio'];
+        }
+        this.browser = await browserType.launch(launchOptions);
         this.context = await this.browser.newContext({
             locale: 'en-US',
             userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             viewport: { width: 1440, height: 900 },
         });
+        if (this.muteAudio) {
+            await this.context.addInitScript(() => {
+                const muteMedia = (node) => {
+                    if (node instanceof HTMLMediaElement) {
+                        node.muted = true;
+                        node.volume = 0;
+                    }
+                };
+                for (const node of document.querySelectorAll('audio,video')) muteMedia(node);
+                const root = document.documentElement || document;
+                new MutationObserver((mutations) => {
+                    for (const mutation of mutations) {
+                        for (const node of mutation.addedNodes) {
+                            muteMedia(node);
+                            if (node instanceof Element) {
+                                for (const media of node.querySelectorAll('audio,video')) muteMedia(media);
+                            }
+                        }
+                    }
+                }).observe(root, { childList: true, subtree: true });
+            });
+        }
         if (this.msToken) {
             await this.context.addCookies([{
                 name: 'msToken',

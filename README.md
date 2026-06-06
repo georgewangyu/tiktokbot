@@ -79,6 +79,7 @@ TIKTOK_RESEARCH_ACCESS_TOKEN=...
 TIKTOK_OPEN_API_BASE_URL=https://open.tiktokapis.com
 TIKTOK_MS_TOKEN=...
 TIKTOK_WEB_BROWSER=chromium
+TIKTOK_WEB_MUTE_AUDIO=true
 TIKTOK_PYTHON_BIN=python3
 ```
 
@@ -188,6 +189,7 @@ Experimentally search public TikTok web results through a Playwright-backed web 
 node src/cli.js web-search "software engineer" \
   --max-results 30 \
   --min-views-per-follower 5 \
+  --mute-audio true \
   --format table
 ```
 
@@ -197,7 +199,7 @@ Fetch public trending/FYP-style videos with the same scorer:
 node src/cli.js web-trending --max-results 30 --sort views-per-follower
 ```
 
-`web-search` and `web-trending` are unofficial scraping adapters inspired by `davidteather/TikTok-Api`. By default, `--backend auto` uses the Python `TikTokApi` package when available, because it currently handles TikTok's stealth/session requirements better than the native Node adapter. The Node adapter remains available with `--backend node`.
+`web-search` and `web-trending` are unofficial scraping adapters inspired by `davidteather/TikTok-Api`. By default, `--backend auto` uses the Python `TikTokApi` package when available, because it currently handles TikTok's stealth/session requirements better than the native Node adapter. The Node adapter remains available with `--backend node`. Browser audio is muted by default to avoid audible autoplay during research; set `--mute-audio false` or `TIKTOK_WEB_MUTE_AUDIO=false` only when you intentionally need to hear media.
 
 Set up the Python backend:
 

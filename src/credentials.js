@@ -75,11 +75,17 @@ export function loadUserTokens() {
     };
 }
 
+function parseBooleanEnv(value, defaultValue) {
+    if (value === undefined || value === null || value === '') return defaultValue;
+    return !['0', 'false', 'no', 'off'].includes(String(value).toLowerCase());
+}
+
 export function loadWebConfig(overrides = {}) {
     return {
         msToken: overrides.msToken || getEnv('TIKTOK_MS_TOKEN') || getEnv('ms_token'),
         browser: overrides.browser || getEnv('TIKTOK_WEB_BROWSER') || 'chromium',
         headless: overrides.headless,
+        muteAudio: overrides.muteAudio !== undefined ? overrides.muteAudio : parseBooleanEnv(getEnv('TIKTOK_WEB_MUTE_AUDIO'), true),
         pythonBin: overrides.pythonBin || getEnv('TIKTOK_PYTHON_BIN') || 'python3',
     };
 }

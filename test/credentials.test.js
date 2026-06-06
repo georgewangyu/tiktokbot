@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import test from 'node:test';
-import { writeEnvValues } from '../src/credentials.js';
+import { loadWebConfig, writeEnvValues } from '../src/credentials.js';
 
 test('writeEnvValues updates existing keys and appends missing keys', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tiktokbot-env-'));
@@ -22,5 +22,24 @@ test('writeEnvValues updates existing keys and appends missing keys', () => {
         );
     } finally {
         rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('loadWebConfig mutes browser audio by default and honors overrides', () => {
+    const previous = process.env.TIKTOK_WEB_MUTE_AUDIO;
+    try {
+        delete process.env.TIKTOK_WEB_MUTE_AUDIO;
+        assert.equal(loadWebConfig().muteAudio, true);
+
+        process.env.TIKTOK_WEB_MUTE_AUDIO = 'false';
+        assert.equal(loadWebConfig().muteAudio, false);
+
+        assert.equal(loadWebConfig({ muteAudio: true }).muteAudio, true);
+    } finally {
+        if (previous === undefined) {
+            delete process.env.TIKTOK_WEB_MUTE_AUDIO;
+        } else {
+            process.env.TIKTOK_WEB_MUTE_AUDIO = previous;
+        }
     }
 });

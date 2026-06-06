@@ -55,6 +55,7 @@ def map_video(data):
 async def collect(args):
     ms_token = os.environ.get("TIKTOK_MS_TOKEN") or None
     ms_tokens = [ms_token] if ms_token else None
+    browser_args = ["--mute-audio"] if parse_bool(args.mute_audio) else None
     rows = []
 
     async with TikTokApi() as api:
@@ -63,6 +64,7 @@ async def collect(args):
             ms_tokens=ms_tokens,
             headless=parse_bool(args.headless),
             browser=args.browser,
+            override_browser_args=browser_args,
             sleep_after=1,
         )
 
@@ -89,6 +91,7 @@ def main():
     parser.add_argument("--max-results", type=int, default=30)
     parser.add_argument("--browser", default="chromium")
     parser.add_argument("--headless", default="true")
+    parser.add_argument("--mute-audio", default="true")
     args = parser.parse_args()
 
     try:

@@ -5,8 +5,8 @@ import { getEnv, loadWebConfig } from './credentials.js';
 
 const BRIDGE_PATH = fileURLToPath(new URL('../python/tiktok_api_bridge.py', import.meta.url));
 
-export async function collectWithPythonBridge({ command, query = '', maxResults = 30, msToken, browser, headless } = {}) {
-    const config = loadWebConfig({ msToken, browser, headless });
+export async function collectWithPythonBridge({ command, query = '', maxResults = 30, msToken, browser, headless, muteAudio } = {}) {
+    const config = loadWebConfig({ msToken, browser, headless, muteAudio });
     const python = config.pythonBin || getEnv('TIKTOK_PYTHON_BIN') || 'python3';
     const args = [
         BRIDGE_PATH,
@@ -17,6 +17,8 @@ export async function collectWithPythonBridge({ command, query = '', maxResults 
         config.browser || 'chromium',
         '--headless',
         String(config.headless !== undefined ? config.headless : true),
+        '--mute-audio',
+        String(config.muteAudio !== undefined ? config.muteAudio : true),
     ];
     if (query) args.push('--query', query);
 
