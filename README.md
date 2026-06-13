@@ -23,6 +23,14 @@ This is the TikTok sibling of `youtubebot`, but TikTok's official access model i
 - TikTok Display API can expose an authorized user's own profile and videos after OAuth, including stats fields, but not broad public discovery.
 - This repo includes a manual worksheet scorer so the scoring workflow is useful before Research API approval.
 
+## Status
+
+This repo is runnable and split across three practical paths:
+
+- manual worksheet scoring for public research now
+- official OAuth-backed own-account analytics now
+- experimental or eligibility-gated public discovery paths when available
+
 ## Architecture
 
 ```text
@@ -51,6 +59,13 @@ tiktokbot/
 
 ```bash
 npm install
+```
+
+## Validation
+
+```bash
+npm run env
+npm test
 ```
 
 ## Access Reality
@@ -262,3 +277,17 @@ See `examples/manual-breakouts.csv`.
 - Research API approval is the broad-discovery blocker, not local code.
 - Display API OAuth is the practical official path for George-owned analytics.
 - TikTok Content Posting API is separate and should be considered later for publishing, not discovery.
+
+## Goals
+
+- Keep the manual scorer and own-account analytics path useful even without
+  Research API approval.
+- Make access constraints legible enough that an agent can choose the right
+  collection path.
+- Preserve experimental web probing without overselling it.
+
+## Non-Goals
+
+- pretending TikTok offers broad stable public discovery to normal developer apps
+- hiding access constraints behind marketing copy
+- turning the repo into a generic social-media scheduler
