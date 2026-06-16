@@ -231,11 +231,17 @@ node src/cli.js photo-post \
 ```
 
 Use `--mode MEDIA_UPLOAD` to send photos to TikTok for completion in the app
-instead of direct posting. TikTok photo posts require public HTTPS URLs under a
-domain or URL prefix verified in the TikTok developer app. TikTok accepts JPEG,
-JPG, and WebP images for this path; convert PNG carousel exports before posting.
-Unaudited apps can still be blocked from Direct Post even when OAuth includes
-`video.publish`; use draft upload or complete TikTok app review.
+instead of direct posting. A successful response with status
+`SEND_TO_USER_INBOX` means TikTok sent an inbox notification to the creator; it
+does not mean the post is live, visible on the profile, or necessarily listed as
+a normal draft. The creator must open the TikTok mobile app inbox notification
+and finish the editing/posting flow before status can become `PUBLISH_COMPLETE`.
+
+TikTok photo posts require public HTTPS URLs under a domain or URL prefix
+verified in the TikTok developer app. TikTok accepts JPEG, JPG, and WebP images
+for this path; convert PNG carousel exports before posting. Unaudited apps can
+still be blocked from Direct Post even when OAuth includes `video.publish`; use
+inbox upload or complete TikTok app review.
 
 Fetch processing status:
 
