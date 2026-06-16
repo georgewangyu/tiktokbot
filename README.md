@@ -100,6 +100,13 @@ TIKTOK_PYTHON_BIN=python3
 
 `TIKTOK_MS_TOKEN` is optional for `web-trending`, but usually needed for `web-search`. To get it, open TikTok in your browser, log in, perform one normal search, then copy the `msToken` cookie value for `www.tiktok.com` / `.tiktok.com` into your private `.env`. Do not commit it.
 
+For Content Posting API photo/video publishing, the app and user token also
+need `video.publish` for direct posts and/or `video.upload` for draft uploads:
+
+```env
+TIKTOK_USER_SCOPE=user.info.basic,user.info.profile,user.info.stats,video.list,video.publish,video.upload
+```
+
 Check config:
 
 ```bash
@@ -122,6 +129,13 @@ Run the guided OAuth flow and save returned user tokens to `tiktokbot/.env`:
 
 ```bash
 node src/cli.js oauth-login
+```
+
+Include Content Posting API scopes during OAuth after the TikTok app has those
+scopes approved/enabled:
+
+```bash
+node src/cli.js oauth-login --posting
 ```
 
 Or exchange the returned callback URL / `code` manually:
@@ -196,6 +210,37 @@ Run the daily-style own-account check: follower count plus recent videos above a
 
 ```bash
 node src/cli.js check --min-outlier 2 --max-results 60
+```
+
+Check Content Posting API creator settings for the authorized account:
+
+```bash
+node src/cli.js posting-info
+```
+
+Initialize a static TikTok photo carousel from verified public JPEG/WebP URLs:
+
+```bash
+node src/cli.js photo-post \
+  'https://static.example.com/tiktok/slide-1.jpg' \
+  'https://static.example.com/tiktok/slide-2.jpg' \
+  --title 'Loop notes' \
+  --description 'Static carousel test' \
+  --privacy-level SELF_ONLY \
+  --auto-add-music true
+```
+
+Use `--mode MEDIA_UPLOAD` to send photos to TikTok for completion in the app
+instead of direct posting. TikTok photo posts require public HTTPS URLs under a
+domain or URL prefix verified in the TikTok developer app. TikTok accepts JPEG,
+JPG, and WebP images for this path; convert PNG carousel exports before posting.
+Unaudited apps can still be blocked from Direct Post even when OAuth includes
+`video.publish`; use draft upload or complete TikTok app review.
+
+Fetch processing status:
+
+```bash
+node src/cli.js post-status 'p_pub_url~v2.123456789'
 ```
 
 Experimentally search public TikTok web results through a Playwright-backed web session:
@@ -276,7 +321,9 @@ See `examples/manual-breakouts.csv`.
 - Research API windows should stay at 30 days or less.
 - Research API approval is the broad-discovery blocker, not local code.
 - Display API OAuth is the practical official path for George-owned analytics.
-- TikTok Content Posting API is separate and should be considered later for publishing, not discovery.
+- TikTok Content Posting API is separate from discovery. It supports direct or
+  draft photo posting through verified public URLs after posting scopes are
+  approved and the user reauthorizes the app.
 
 ## Goals
 

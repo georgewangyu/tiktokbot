@@ -8,6 +8,11 @@ export const DEFAULT_DISPLAY_SCOPES = [
     'video.list',
 ];
 
+export const CONTENT_POSTING_SCOPES = [
+    'video.publish',
+    'video.upload',
+];
+
 export function buildAuthorizationUrl({
     clientKey,
     redirectUri,

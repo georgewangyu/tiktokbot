@@ -125,6 +125,114 @@ Refresh later:
 node src/cli.js refresh-token --save
 ```
 
+## Optional Path: Content Posting API
+
+Use this when posting videos or static photo carousels from `tiktokbot`.
+This is separate from Display API analytics.
+
+TikTok photo posts use the Content Posting API endpoint
+`/v2/post/publish/content/init/` with `media_type=PHOTO`.
+
+Requirements:
+
+- Add the Content Posting API product to the TikTok developer app.
+- Enable Direct Post if direct publishing is needed.
+- Get `video.publish` approval for direct posts.
+- Get `video.upload` approval for draft/inbox uploads.
+- Reauthorize the TikTok user after those scopes are available:
+
+```bash
+node src/cli.js oauth-login --posting
+```
+
+Check the saved token scope afterward:
+
+```bash
+node src/cli.js env
+```
+
+It should include `video.publish` and/or `video.upload`.
+
+For local desktop OAuth, prefer the guided flow:
+
+```bash
+node src/cli.js oauth-login --posting
+```
+
+This flow generates the TikTok-compatible PKCE challenge, keeps the verifier in
+memory, validates the returned `state`, exchanges the code, and saves the user
+tokens. If the TikTok authorization page returns `param_error` for
+`code_challenge`, restart the guided command and copy the full printed URL into
+the browser; partial URLs can silently drop required PKCE parameters.
+
+Before direct posting, query creator info and use one of the returned privacy
+levels:
+
+```bash
+node src/cli.js posting-info
+```
+
+Static photo carousel example:
+
+```bash
+node src/cli.js photo-post \
+  'https://static.example.com/tiktok/slide-1.jpg' \
+  'https://static.example.com/tiktok/slide-2.jpg' \
+  --title 'Carousel title' \
+  --description 'Carousel caption' \
+  --privacy-level SELF_ONLY \
+  --auto-add-music true
+```
+
+Draft upload example:
+
+```bash
+node src/cli.js photo-post \
+  'https://static.example.com/tiktok/slide-1.jpg' \
+  'https://static.example.com/tiktok/slide-2.jpg' \
+  --mode MEDIA_UPLOAD \
+  --title 'Carousel title' \
+  --description 'Carousel caption'
+```
+
+Important media constraints:
+
+- Photo URLs must be public HTTPS URLs.
+- URLs must be under a domain or URL prefix verified in the TikTok developer app.
+- The URLs should not redirect.
+- Images must be JPEG/JPG or WebP, not PNG.
+- TikTok allows up to 35 photo URLs per post.
+
+For George's existing Instagram carousel exports, convert the static PNG posters
+to JPEG or WebP first. The Instagram MP4-per-slide motion carousel format does
+not map to TikTok photo posts; use a single vertical video if motion is required.
+
+### Current Platform Gates Observed
+
+The CLI can authenticate and build valid Content Posting API requests, but
+TikTok still enforces app/account gates at publish time:
+
+- `unaudited_client_can_only_post_to_private_accounts`: Direct Post can be
+  blocked for unaudited apps even when the user token has `video.publish`.
+  Posting with `privacy_level=SELF_ONLY` is not enough if TikTok requires the
+  account itself to be private during unaudited testing. For public-account
+  direct posting, complete TikTok's app audit/integration review.
+- `url_ownership_unverified`: Photo posts use `PULL_FROM_URL`; the media URLs
+  must be under a verified domain or URL prefix in the TikTok developer app.
+  A public `HEAD 200` S3 object is necessary but not sufficient.
+
+For a draft/inbox style photo carousel test, first verify the exact media URL
+prefix in the TikTok developer console, then retry:
+
+```bash
+node src/cli.js photo-post \
+  'https://verified.example.com/tiktok/slide-1.jpg' \
+  'https://verified.example.com/tiktok/slide-2.jpg' \
+  --mode MEDIA_UPLOAD \
+  --title 'Carousel title' \
+  --description 'Carousel caption'
+```
+
 ## Manual Competitor Test
 
 Use a manual worksheet for competitor scouting:

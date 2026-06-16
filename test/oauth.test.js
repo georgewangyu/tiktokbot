@@ -33,7 +33,7 @@ test('buildAuthorizationUrl includes PKCE parameters when provided', () => {
     assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
 });
 
-test('createPkcePair creates a verifier and hex SHA256 challenge', () => {
+test('createPkcePair creates a verifier and TikTok desktop hex SHA256 challenge', () => {
     const pkce = createPkcePair();
 
     assert.match(pkce.verifier, /^[A-Za-z0-9_-]{43,128}$/);

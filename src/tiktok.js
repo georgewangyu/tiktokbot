@@ -204,6 +204,104 @@ export class TikTokDisplayClient {
     }
 }
 
+export class TikTokContentPostingClient {
+    constructor({ accessToken, baseUrl } = {}) {
+        this.accessToken = accessToken;
+        this.baseUrl = baseUrl || loadApiConfig().baseUrl || 'https://open.tiktokapis.com';
+        if (!this.accessToken) {
+            throw new Error('Missing credentials: TIKTOK_USER_ACCESS_TOKEN');
+        }
+    }
+
+    async request(path, { method = 'GET', query = {}, body } = {}) {
+        const url = new URL(path, this.baseUrl);
+        for (const [key, value] of Object.entries(query)) {
+            if (value === undefined || value === null || value === '') continue;
+            url.searchParams.set(key, String(value));
+        }
+
+        const response = await fetch(url, {
+            method,
+            headers: {
+                Authorization: `Bearer ${this.accessToken}`,
+                'Content-Type': 'application/json; charset=UTF-8',
+            },
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        const json = await response.json().catch(() => ({}));
+        const errorCode = json?.error?.code;
+        if (!response.ok || (errorCode && errorCode !== 'ok')) {
+            const message = json?.error?.message || json?.error_description || json?.message || `${response.status} ${response.statusText}`;
+            const error = new Error(`TikTok Content Posting API error for ${path}: ${message || errorCode}`);
+            error.status = response.status;
+            error.payload = json;
+            throw error;
+        }
+        return json;
+    }
+
+    async queryCreatorInfo() {
+        const page = await this.request('/v2/post/publish/creator_info/query/', {
+            method: 'POST',
+            body: {},
+        });
+        return page?.data || {};
+    }
+
+    async initPhotoPost({
+        photoUrls,
+        title = '',
+        description = '',
+        postMode = 'DIRECT_POST',
+        privacyLevel = 'SELF_ONLY',
+        coverIndex = 0,
+        disableComment = false,
+        autoAddMusic = false,
+        brandContentToggle = false,
+        brandOrganicToggle = false,
+    }) {
+        const mode = normalizePhotoPostMode(postMode);
+        validatePhotoPostInput({ photoUrls, title, description, coverIndex });
+
+        const postInfo = {
+            ...(title ? { title } : {}),
+            ...(description ? { description } : {}),
+        };
+
+        if (mode === 'DIRECT_POST') {
+            postInfo.privacy_level = privacyLevel;
+            postInfo.disable_comment = Boolean(disableComment);
+            postInfo.auto_add_music = Boolean(autoAddMusic);
+            postInfo.brand_content_toggle = Boolean(brandContentToggle);
+            postInfo.brand_organic_toggle = Boolean(brandOrganicToggle);
+        }
+
+        const page = await this.request('/v2/post/publish/content/init/', {
+            method: 'POST',
+            body: {
+                post_info: postInfo,
+                source_info: {
+                    source: 'PULL_FROM_URL',
+                    photo_cover_index: coverIndex,
+                    photo_images: photoUrls,
+                },
+                post_mode: mode,
+                media_type: 'PHOTO',
+            },
+        });
+        return page?.data || {};
+    }
+
+    async fetchPostStatus({ publishId }) {
+        if (!publishId) throw new Error('Missing publish id');
+        const page = await this.request('/v2/post/publish/status/fetch/', {
+            method: 'POST',
+            body: { publish_id: publishId },
+        });
+        return page?.data || {};
+    }
+}
+
 export function getDisplayUserFields(scope = '') {
     const scopes = new Set(String(scope).split(/[,\s]+/).map((item) => item.trim()).filter(Boolean));
     const fields = [...BASIC_DISPLAY_USER_FIELDS];
@@ -214,6 +312,34 @@ export function getDisplayUserFields(scope = '') {
         fields.push('follower_count', 'following_count', 'likes_count', 'video_count');
     }
     return fields;
+}
+
+export function normalizePhotoPostMode(value) {
+    const mode = String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    if (mode === 'DIRECT_POST' || mode === 'MEDIA_UPLOAD') return mode;
+    throw new Error(`Invalid photo post mode: ${value}. Use DIRECT_POST or MEDIA_UPLOAD.`);
+}
+
+function validatePhotoPostInput({ photoUrls, title, description, coverIndex }) {
+    if (!Array.isArray(photoUrls) || photoUrls.length < 1 || photoUrls.length > 35) {
+        throw new Error('TikTok photo posts require 1-35 image URLs.');
+    }
+    if (!Number.isInteger(coverIndex) || coverIndex < 0 || coverIndex >= photoUrls.length) {
+        throw new Error(`Photo cover index must be between 0 and ${photoUrls.length - 1}.`);
+    }
+    if (Array.from(String(title || '')).length > 90) {
+        throw new Error('TikTok photo post title must be 90 characters or fewer.');
+    }
+    if (Array.from(String(description || '')).length > 4000) {
+        throw new Error('TikTok photo post description must be 4000 characters or fewer.');
+    }
+
+    for (const url of photoUrls) {
+        const parsed = new URL(url);
+        if (parsed.protocol !== 'https:') {
+            throw new Error(`TikTok photo URL must use https: ${url}`);
+        }
+    }
 }
 
 function buildConditions({ query, field, regionCode, minViews }) {

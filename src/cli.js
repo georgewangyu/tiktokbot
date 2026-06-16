@@ -5,10 +5,10 @@ import { stdin, stdout } from 'process';
 import { createInterface } from 'readline/promises';
 import { getDefaultEnvFilePath, getEnv, loadApiConfig, loadOAuthConfig, loadUserTokens, loadWebConfig, writeEnvValues } from './credentials.js';
 import { findMyOutliers, findResearchOutliers, rankRows, scoreManualFile } from './finder.js';
-import { buildAuthorizationUrl, createPkcePair, DEFAULT_DISPLAY_SCOPES, exchangeCodeForToken, fetchClientAccessToken, parseOAuthCallbackInput, refreshUserAccessToken } from './oauth.js';
+import { buildAuthorizationUrl, CONTENT_POSTING_SCOPES, createPkcePair, DEFAULT_DISPLAY_SCOPES, exchangeCodeForToken, fetchClientAccessToken, parseOAuthCallbackInput, refreshUserAccessToken } from './oauth.js';
 import { printResults } from './output.js';
 import { collectWithPythonBridge } from './pythonBridge.js';
-import { getDisplayUserFields, TikTokDisplayClient, TikTokResearchClient } from './tiktok.js';
+import { getDisplayUserFields, TikTokContentPostingClient, TikTokDisplayClient, TikTokResearchClient } from './tiktok.js';
 import { withTikTokWebClient } from './web.js';
 
 const program = new Command();
@@ -28,6 +28,15 @@ function parseFloatOption(value) {
 function parseBoolean(value) {
     if (value === true || value === false) return value;
     return !['0', 'false', 'no', 'off'].includes(String(value).toLowerCase());
+}
+
+function parseScopes(value, { includePosting = false } = {}) {
+    const scopes = String(value || '')
+        .split(/[,\s]+/)
+        .map((scope) => scope.trim())
+        .filter(Boolean);
+    if (includePosting) scopes.push(...CONTENT_POSTING_SCOPES);
+    return [...new Set(scopes)];
 }
 
 async function collectWebVideos({ backend = 'auto', command, query, maxResults, msToken, browser, headless, muteAudio }) {
@@ -59,12 +68,13 @@ program
     .description('Generate a TikTok Login Kit OAuth URL for Display API access')
     .option('--redirect-uri <uri>', 'Override redirect URI')
     .option('--scope <scopes>', 'Comma- or space-separated scopes', DEFAULT_DISPLAY_SCOPES.join(','))
+    .option('--posting', 'Include Content Posting API scopes: video.publish and video.upload')
     .option('--state <value>', 'Explicit OAuth state value')
     .option('--disable-auto-auth', 'Always show the TikTok authorization page')
     .option('--pkce', 'Include a desktop-app PKCE challenge and print the verifier')
     .action((options) => {
         try {
-            const scopes = options.scope.split(/[,\s]+/).map((scope) => scope.trim()).filter(Boolean);
+            const scopes = parseScopes(options.scope, { includePosting: options.posting });
             const pkce = options.pkce ? createPkcePair() : null;
             const result = buildAuthorizationUrl({
                 redirectUri: options.redirectUri,
@@ -89,15 +99,17 @@ program
     .description('Run the TikTok Display API OAuth setup flow and optionally save user tokens')
     .option('--redirect-uri <uri>', 'Override redirect URI')
     .option('--scope <scopes>', 'Comma- or space-separated scopes', DEFAULT_DISPLAY_SCOPES.join(','))
+    .option('--posting', 'Include Content Posting API scopes: video.publish and video.upload')
     .option('--state <value>', 'Explicit OAuth state value')
     .option('--disable-auto-auth', 'Always show the TikTok authorization page')
     .option('--env-file <path>', 'Env file to update when saving tokens', getDefaultEnvFilePath())
     .option('--no-save', 'Print tokens without updating the env file')
     .option('--no-pkce', 'Disable desktop-app PKCE parameters')
+    .option('--print-env', 'Print raw token env values to stdout')
     .action(async (options) => {
         const rl = createInterface({ input: stdin, output: stdout });
         try {
-            const scopes = options.scope.split(/[,\s]+/).map((scope) => scope.trim()).filter(Boolean);
+            const scopes = parseScopes(options.scope, { includePosting: options.posting });
             const pkce = options.pkce ? createPkcePair() : null;
             const auth = buildAuthorizationUrl({
                 redirectUri: options.redirectUri,
@@ -127,7 +139,7 @@ program
                 redirectUri: options.redirectUri,
                 codeVerifier: pkce?.verifier,
             });
-            printTokenSummary(token, { envFile: options.save ? options.envFile : '' });
+            printTokenSummary(token, { envFile: options.save ? options.envFile : '', printEnv: options.printEnv });
             if (options.save) {
                 const target = saveUserTokenEnv(token, options.envFile);
                 console.log(`\nSaved Display API tokens to ${target}`);
@@ -147,6 +159,7 @@ program
     .option('--code-verifier <value>', 'PKCE code verifier for desktop/mobile app flows')
     .option('--save', 'Save returned user tokens to an env file')
     .option('--env-file <path>', 'Env file to update when saving tokens', getDefaultEnvFilePath())
+    .option('--print-env', 'Print raw token env values to stdout')
     .action(async (code, options) => {
         try {
             const callback = parseOAuthCallbackInput(code);
@@ -158,7 +171,7 @@ program
                 redirectUri: options.redirectUri,
                 codeVerifier: options.codeVerifier,
             });
-            printTokenSummary(token, { envFile: options.save ? options.envFile : '' });
+            printTokenSummary(token, { envFile: options.save ? options.envFile : '', printEnv: options.printEnv });
             if (options.save) {
                 const target = saveUserTokenEnv(token, options.envFile);
                 console.log(`\nSaved Display API tokens to ${target}`);
@@ -174,11 +187,12 @@ program
     .description('Refresh the TikTok user access token using TIKTOK_USER_REFRESH_TOKEN')
     .option('--save', 'Save returned user tokens to an env file')
     .option('--env-file <path>', 'Env file to update when saving tokens', getDefaultEnvFilePath())
+    .option('--print-env', 'Print raw token env values to stdout')
     .action(async (options) => {
         try {
             const tokens = loadUserTokens();
             const token = await refreshUserAccessToken({ refreshToken: tokens.refreshToken });
-            printTokenSummary(token, { envFile: options.save ? options.envFile : '' });
+            printTokenSummary(token, { envFile: options.save ? options.envFile : '', printEnv: options.printEnv });
             if (options.save) {
                 const target = saveUserTokenEnv(token, options.envFile);
                 console.log(`\nSaved Display API tokens to ${target}`);
@@ -192,7 +206,8 @@ program
 program
     .command('client-token')
     .description('Fetch a TikTok client access token using TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET')
-    .action(async () => {
+    .option('--print-token', 'Print the raw client access token to stdout')
+    .action(async (options) => {
         try {
             const token = await fetchClientAccessToken();
             console.log(JSON.stringify({
@@ -202,8 +217,73 @@ program
             }, null, 2));
             if (token.access_token) {
                 console.log('\nSuggested env addition:');
-                console.log(`TIKTOK_RESEARCH_ACCESS_TOKEN=${token.access_token}`);
+                console.log(`TIKTOK_RESEARCH_ACCESS_TOKEN=${options.printToken ? token.access_token : '<hidden; rerun with --print-token if needed>'}`);
             }
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('posting-info')
+    .description('Fetch TikTok Content Posting API creator info for the OAuth-authorized account')
+    .action(async () => {
+        try {
+            const tokens = loadUserTokens();
+            const client = new TikTokContentPostingClient({ accessToken: tokens.accessToken });
+            const info = await client.queryCreatorInfo();
+            console.log(JSON.stringify(info, null, 2));
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('photo-post <urls...>')
+    .description('Initialize a TikTok static photo post from verified public JPEG/WebP URLs')
+    .option('--mode <mode>', 'DIRECT_POST or MEDIA_UPLOAD', 'DIRECT_POST')
+    .option('--title <title>', 'Photo post title, max 90 characters', '')
+    .option('--description <text>', 'Photo post description/caption, max 4000 characters', '')
+    .option('--privacy-level <level>', 'DIRECT_POST privacy level from posting-info options', 'SELF_ONLY')
+    .option('--cover-index <number>', 'Zero-based cover image index', parseInteger, 0)
+    .option('--disable-comment <bool>', 'Disable comments for DIRECT_POST', parseBoolean, false)
+    .option('--auto-add-music <bool>', 'Let TikTok automatically add recommended music for DIRECT_POST photos', parseBoolean, false)
+    .option('--brand-content <bool>', 'Mark DIRECT_POST as paid/branded content', parseBoolean, false)
+    .option('--brand-organic <bool>', 'Mark DIRECT_POST as promoting your own business', parseBoolean, false)
+    .action(async (urls, options) => {
+        try {
+            const tokens = loadUserTokens();
+            const client = new TikTokContentPostingClient({ accessToken: tokens.accessToken });
+            const result = await client.initPhotoPost({
+                photoUrls: urls,
+                title: options.title,
+                description: options.description,
+                postMode: options.mode,
+                privacyLevel: options.privacyLevel,
+                coverIndex: options.coverIndex,
+                disableComment: options.disableComment,
+                autoAddMusic: options.autoAddMusic,
+                brandContentToggle: options.brandContent,
+                brandOrganicToggle: options.brandOrganic,
+            });
+            console.log(JSON.stringify(result, null, 2));
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('post-status <publish-id>')
+    .description('Fetch Content Posting API status for a publish_id')
+    .action(async (publishId) => {
+        try {
+            const tokens = loadUserTokens();
+            const client = new TikTokContentPostingClient({ accessToken: tokens.accessToken });
+            const status = await client.fetchPostStatus({ publishId });
+            console.log(JSON.stringify(status, null, 2));
         } catch (error) {
             console.error(`Error: ${error.message}`);
             process.exit(1);
@@ -510,7 +590,7 @@ program
 
 program.parse();
 
-function printTokenSummary(token, { envFile = '' } = {}) {
+function printTokenSummary(token, { envFile = '', printEnv = false } = {}) {
     console.log(JSON.stringify({
         token_type: token.token_type,
         expires_in: token.expires_in,
@@ -520,6 +600,10 @@ function printTokenSummary(token, { envFile = '' } = {}) {
         has_access_token: Boolean(token.access_token),
         has_refresh_token: Boolean(token.refresh_token),
     }, null, 2));
+    if (!printEnv) {
+        console.log('\nToken values hidden. Use --save to write them to an env file, or --print-env if you intentionally need raw values.');
+        return;
+    }
     console.log(envFile ? `\nEnv values for ${envFile}:` : '\nSuggested env additions:');
     if (token.access_token) console.log(`TIKTOK_USER_ACCESS_TOKEN=${token.access_token}`);
     if (token.refresh_token) console.log(`TIKTOK_USER_REFRESH_TOKEN=${token.refresh_token}`);

@@ -9,7 +9,9 @@ The useful broad-discovery path is TikTok Research API, not the Content Posting 
 For normal developer/creator usage, the official APIs are narrower:
 
 - Display API: OAuth-authorized user's own profile and videos. This is the practical official path for George's own TikTok analytics.
-- Content Posting API: posting/uploading.
+- Content Posting API: posting/uploading. It can post videos and static photo
+  carousels after app approval, user authorization for `video.publish` and/or
+  `video.upload`, and verified public media URL ownership.
 - Commercial Content API: commercial/ads transparency surfaces, not general creator breakout discovery.
 
 ## What We Need For Breakout Scouting
@@ -43,6 +45,15 @@ OAuth/token setup only proves we can call TikTok APIs. It does not guarantee:
 - broad public search access
 - enough rate limit for weekly scouting
 - permission to store all raw fields indefinitely
+- Content Posting API direct-post audit approval
+- Content Posting API verified ownership for media URL prefixes
+
+For photo carousels specifically, a user token with `video.publish` and
+`video.upload` is necessary but still not sufficient. TikTok can reject direct
+publishing from unaudited apps with
+`unaudited_client_can_only_post_to_private_accounts`, and can reject URL-pulled
+photo media with `url_ownership_unverified` until the app verifies ownership of
+the domain or URL prefix serving those JPEG/WebP files.
 
 ## Fallback Strategy
 
@@ -125,7 +136,22 @@ Limitations:
 
 This bot should find and rank candidate concepts. It should not auto-post.
 
-Publishing can come later through TikTok Content Posting API, but the immediate value is:
+Publishing can come through TikTok Content Posting API, but it is a separate
+path from discovery. Photo carousels use public verified JPEG/WebP URLs through
+`/v2/post/publish/content/init/`; they are not the same as Instagram's
+MP4-per-slide carousel path.
+
+The practical publishing path is:
+
+1. OAuth with posting scopes using `node src/cli.js oauth-login --posting`.
+2. Confirm `node src/cli.js posting-info` returns the expected account and
+   privacy options.
+3. Convert static carousel slides to JPEG/WebP.
+4. Serve the files from a TikTok-verified URL prefix or domain.
+5. Use `photo-post --mode MEDIA_UPLOAD` for draft/inbox upload while the app is
+   unaudited, or Direct Post only after audit approval.
+
+The immediate research value is still:
 
 ```text
 small creator breakout -> why packaging worked -> George-specific twist -> filmable idea
