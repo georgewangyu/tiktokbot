@@ -1,17 +1,3 @@
----
-doc_schema: "doc-frontmatter-v1"
-doc_id: "tiktokbot/README"
-doc_type: "readme"
-doc_status: "active"
-title: "tiktokbot - TikTok Breakout Finder"
-description: "CLI for finding low-follower, high-view TikTok videos using Research API metadata or manual worksheets."
-memory_eligible: false
-memory_priority: "low"
-doc_tags:
-  - "domain:social-media"
-  - "tool:tiktokbot"
-  - "type:readme"
----
 # tiktokbot - TikTok Breakout Finder
 
 CLI for finding TikTok inspiration videos where a low-follower creator has a high-performing post.
@@ -70,12 +56,12 @@ npm test
 
 ## Access Reality
 
-For George's likely use case, assume Research API access is not available unless there is a real eligible research affiliation and public-interest proposal.
+For most creator-research workflows, assume Research API access is not available unless there is a real eligible research affiliation and public-interest proposal.
 
 Practical tracks:
 
 1. **Manual worksheet scorer now**: collect creator/video rows manually and rank them with `score-file`.
-2. **Display API now**: OAuth into George's own TikTok account and analyze his own videos/baseline.
+2. **Display API now**: OAuth into an owned TikTok account and analyze its own videos/baseline.
 3. **Research API only if eligible**: academic/not-for-profit/public-interest application, with approval expected to take weeks.
 4. **Unofficial/public probing**: Playwright-backed web search/trending is available as an experimental path, but it is brittle and policy-sensitive.
 
