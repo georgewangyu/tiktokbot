@@ -8,7 +8,7 @@ import { findMyOutliers, findResearchOutliers, rankRows, scoreManualFile } from 
 import { buildAuthorizationUrl, CONTENT_POSTING_SCOPES, createPkcePair, DEFAULT_DISPLAY_SCOPES, exchangeCodeForToken, fetchClientAccessToken, parseOAuthCallbackInput, refreshUserAccessToken } from './oauth.js';
 import { printResults } from './output.js';
 import { collectWithPythonBridge } from './pythonBridge.js';
-import { getDisplayUserFields, TikTokContentPostingClient, TikTokDisplayClient, TikTokResearchClient } from './tiktok.js';
+import { buildTikTokVideoSourceInfo, getDisplayUserFields, inspectTikTokVideoFile, normalizeVideoPostMode, TikTokContentPostingClient, TikTokDisplayClient, TikTokResearchClient } from './tiktok.js';
 import { withTikTokWebClient } from './web.js';
 
 const program = new Command();
@@ -37,6 +37,24 @@ function parseScopes(value, { includePosting = false } = {}) {
         .filter(Boolean);
     if (includePosting) scopes.push(...CONTENT_POSTING_SCOPES);
     return [...new Set(scopes)];
+}
+
+async function withPostingClient(operation) {
+    const tokens = loadUserTokens();
+    const run = (accessToken) => operation(new TikTokContentPostingClient({ accessToken }));
+    try {
+        return await run(tokens.accessToken);
+    } catch (error) {
+        const errorCode = error?.payload?.error?.code;
+        const tokenExpired = error.status === 401
+            || errorCode === 'access_token_invalid'
+            || /access token is invalid|access_token.*expired/i.test(error.message);
+        if (!tokenExpired || !tokens.refreshToken) throw error;
+
+        const refreshed = await refreshUserAccessToken({ refreshToken: tokens.refreshToken });
+        saveUserTokenEnv(refreshed, getDefaultEnvFilePath());
+        return run(refreshed.access_token);
+    }
 }
 
 async function collectWebVideos({ backend = 'auto', command, query, maxResults, msToken, browser, headless, muteAudio }) {
@@ -230,9 +248,7 @@ program
     .description('Fetch TikTok Content Posting API creator info for the OAuth-authorized account')
     .action(async () => {
         try {
-            const tokens = loadUserTokens();
-            const client = new TikTokContentPostingClient({ accessToken: tokens.accessToken });
-            const info = await client.queryCreatorInfo();
+            const info = await withPostingClient((client) => client.queryCreatorInfo());
             console.log(JSON.stringify(info, null, 2));
         } catch (error) {
             console.error(`Error: ${error.message}`);
@@ -254,9 +270,7 @@ program
     .option('--brand-organic <bool>', 'Mark DIRECT_POST as promoting your own business', parseBoolean, false)
     .action(async (urls, options) => {
         try {
-            const tokens = loadUserTokens();
-            const client = new TikTokContentPostingClient({ accessToken: tokens.accessToken });
-            const result = await client.initPhotoPost({
+            const result = await withPostingClient((client) => client.initPhotoPost({
                 photoUrls: urls,
                 title: options.title,
                 description: options.description,
@@ -267,6 +281,93 @@ program
                 autoAddMusic: options.autoAddMusic,
                 brandContentToggle: options.brandContent,
                 brandOrganicToggle: options.brandOrganic,
+            }));
+            console.log(JSON.stringify(result, null, 2));
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+            process.exit(1);
+        }
+    });
+
+program
+    .command('video-post <source>')
+    .description('Upload a local video or pull a verified HTTPS video URL for TikTok posting')
+    .option('--mode <mode>', 'DIRECT_POST or MEDIA_UPLOAD', 'MEDIA_UPLOAD')
+    .option('--title <text>', 'DIRECT_POST caption, hashtags, and mentions', '')
+    .option('--privacy-level <level>', 'DIRECT_POST privacy level from posting-info', 'SELF_ONLY')
+    .option('--cover-time-ms <number>', 'DIRECT_POST cover frame timestamp in milliseconds', parseInteger, 0)
+    .option('--disable-comment <bool>', 'Disable comments for DIRECT_POST', parseBoolean, false)
+    .option('--disable-duet <bool>', 'Disable duets for DIRECT_POST', parseBoolean, false)
+    .option('--disable-stitch <bool>', 'Disable stitches for DIRECT_POST', parseBoolean, false)
+    .option('--confirm-public', 'Confirm a PUBLIC_TO_EVERYONE Direct Post was explicitly approved')
+    .option('--poll-interval <seconds>', 'Status polling interval in seconds', parseInteger, 10)
+    .option('--timeout <seconds>', 'Status wait timeout in seconds', parseInteger, 900)
+    .option('--no-wait', 'Return after the media transfer instead of waiting for a terminal status')
+    .option('--dry-run', 'Validate the source and print the upload plan without contacting TikTok')
+    .action(async (source, options) => {
+        try {
+            const mode = normalizeVideoPostMode(options.mode);
+            if (mode === 'DIRECT_POST'
+                && options.privacyLevel === 'PUBLIC_TO_EVERYONE'
+                && !options.confirmPublic) {
+                throw new Error('PUBLIC_TO_EVERYONE requires --confirm-public after the account owner approves the exact video and caption.');
+            }
+
+            if (options.dryRun) {
+                const isUrl = /^https:\/\//i.test(source);
+                const file = isUrl ? null : await inspectTikTokVideoFile(source);
+                console.log(JSON.stringify({
+                    dryRun: true,
+                    mode,
+                    title: options.title,
+                    privacyLevel: options.privacyLevel,
+                    file,
+                    sourceInfo: buildTikTokVideoSourceInfo(isUrl
+                        ? { videoUrl: source }
+                        : { videoSize: file.size }),
+                }, null, 2));
+                return;
+            }
+
+            const result = await withPostingClient(async (client) => {
+                const creatorInfo = mode === 'DIRECT_POST'
+                    ? await client.queryCreatorInfo()
+                    : null;
+                if (creatorInfo
+                    && !creatorInfo.privacy_level_options?.includes(options.privacyLevel)) {
+                    throw new Error(`TikTok account does not currently allow privacy level ${options.privacyLevel}.`);
+                }
+                const common = {
+                    postMode: mode,
+                    title: options.title,
+                    privacyLevel: options.privacyLevel,
+                    videoCoverTimestampMs: options.coverTimeMs,
+                    disableComment: options.disableComment || creatorInfo?.comment_disabled,
+                    disableDuet: options.disableDuet || creatorInfo?.duet_disabled,
+                    disableStitch: options.disableStitch || creatorInfo?.stitch_disabled,
+                };
+                const initialized = /^https:\/\//i.test(source)
+                    ? await client.initVideoPost({ ...common, videoUrl: source })
+                    : await client.createVideoPostFromFile({ ...common, filePath: source });
+                const publishId = initialized.publish_id;
+                if (!publishId) {
+                    throw new Error(`TikTok video post did not return publish_id: ${JSON.stringify(initialized)}`);
+                }
+                const status = options.wait
+                    ? await client.waitForPost({
+                        publishId,
+                        pollIntervalMs: options.pollInterval * 1000,
+                        timeoutMs: options.timeout * 1000,
+                    })
+                    : null;
+                return {
+                    publishId,
+                    mode,
+                    source: /^https:\/\//i.test(source) ? 'PULL_FROM_URL' : 'FILE_UPLOAD',
+                    creator: creatorInfo?.creator_username || null,
+                    upload: initialized.upload || null,
+                    status,
+                };
             });
             console.log(JSON.stringify(result, null, 2));
         } catch (error) {
@@ -280,9 +381,7 @@ program
     .description('Fetch Content Posting API status for a publish_id')
     .action(async (publishId) => {
         try {
-            const tokens = loadUserTokens();
-            const client = new TikTokContentPostingClient({ accessToken: tokens.accessToken });
-            const status = await client.fetchPostStatus({ publishId });
+            const status = await withPostingClient((client) => client.fetchPostStatus({ publishId }));
             console.log(JSON.stringify(status, null, 2));
         } catch (error) {
             console.error(`Error: ${error.message}`);

@@ -4,7 +4,7 @@ TikTok does not have a Google Cloud equivalent where the whole low-follower/high
 
 ## Reality Check
 
-The Research API is probably not available for George's normal creator-tooling use case.
+The Research API is probably not available for ordinary creator-tooling use cases.
 
 TikTok says applicants must be in an eligible region and affiliated with an eligible academic institution or qualifying not-for-profit / independent research organization. Applicants also need research expertise, independence from commercial interests, funding disclosure, a defined research proposal, data security commitments, and evidence of ethical research review.
 
@@ -41,7 +41,7 @@ TIKTOK_RESEARCH_ACCESS_TOKEN=...
 7. Smoke test a Research API user lookup:
 
 ```bash
-node src/cli.js user snackoverflowgeorge
+node src/cli.js user example_creator
 ```
 
 8. Smoke test a keyword search:
@@ -52,7 +52,8 @@ node src/cli.js find "software engineer" --field keyword --region US --min-views
 
 ## Practical Path For Us: Display API
 
-Display API is the official OAuth path we can realistically use. It will not discover arbitrary creators, but it can analyze George's own account.
+Display API is the practical official OAuth path. It will not discover
+arbitrary creators, but it can analyze the authorized account.
 
 Manual setup:
 
@@ -172,6 +173,28 @@ levels:
 node src/cli.js posting-info
 ```
 
+Validate and upload a local MP4/MOV/WebM video to the creator inbox:
+
+```bash
+node src/cli.js video-post ./final-video.mp4 --mode MEDIA_UPLOAD --dry-run
+node src/cli.js video-post ./final-video.mp4 --mode MEDIA_UPLOAD
+```
+
+The inbox route uses `video.upload` and requires the creator to finish the post
+in TikTok's native creation flow. Direct Post uses `video.publish`:
+
+```bash
+node src/cli.js video-post ./final-video.mp4 \
+  --mode DIRECT_POST \
+  --title 'Approved caption #topic' \
+  --privacy-level SELF_ONLY
+```
+
+The CLI transfers local files with TikTok's `FILE_UPLOAD` byte-range protocol,
+polls the returned publish ID, and refreshes an expired posting token once. A
+verified HTTPS URL can be supplied instead, but it remains subject to TikTok's
+URL-ownership gate.
+
 Static photo carousel example:
 
 ```bash
@@ -197,13 +220,16 @@ node src/cli.js photo-post \
 
 Important media constraints:
 
+- Local videos must be MP4, MOV, or WebM and no larger than 4 GB.
+- TikTok video chunks are 5-64 MB, with a final chunk up to 128 MB; small files
+  are sent as one chunk.
 - Photo URLs must be public HTTPS URLs.
 - URLs must be under a domain or URL prefix verified in the TikTok developer app.
 - The URLs should not redirect.
 - Images must be JPEG/JPG or WebP, not PNG.
 - TikTok allows up to 35 photo URLs per post.
 
-For George's existing Instagram carousel exports, convert the static PNG posters
+For existing carousel exports, convert static PNG posters
 to JPEG or WebP first. The Instagram MP4-per-slide motion carousel format does
 not map to TikTok photo posts; use a single vertical video if motion is required.
 

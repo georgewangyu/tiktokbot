@@ -2,13 +2,16 @@
 
 ## Practical Read
 
-TikTok can technically support the low-follower/high-view scout through the Research API, but that path is not realistically self-serve for George's creator-tooling use case.
+TikTok can technically support the low-follower/high-view scout through the
+Research API, but that path is not realistically self-serve for ordinary
+creator-tooling use cases.
 
 The useful broad-discovery path is TikTok Research API, not the Content Posting API. But the Research API is for qualifying researchers affiliated with eligible academic or not-for-profit/public-interest organizations.
 
 For normal developer/creator usage, the official APIs are narrower:
 
-- Display API: OAuth-authorized user's own profile and videos. This is the practical official path for George's own TikTok analytics.
+- Display API: OAuth-authorized user's own profile and videos. This is the
+  practical official path for authorized-account analytics.
 - Content Posting API: posting/uploading. It can post videos and static photo
   carousels after app approval, user authorization for `video.publish` and/or
   `video.upload`, and verified public media URL ownership.
@@ -61,7 +64,7 @@ If Research API access is not available:
 
 1. Use `score-file` with manually collected CSV/JSONL rows.
 2. Build a watchlist of creators and hashtags.
-3. Add Display API for George's own account analytics.
+3. Add Display API for own-account analytics.
 4. Add a public-page probe only after deciding the policy/risk tradeoff is acceptable.
 
 ## Browser / Public Probe Workarounds
@@ -85,7 +88,8 @@ Options:
    - Highest coverage, highest breakage/policy risk.
    - Do not make this the default path without an explicit decision.
 
-Recommended near-term: Display API for George's account plus human-in-the-loop/manual rows for competitor scouting.
+Recommended near-term: Display API for the authorized account plus
+human-in-the-loop/manual rows for competitor scouting.
 
 ## Experimental TikTok Web Adapter
 
@@ -154,5 +158,5 @@ The practical publishing path is:
 The immediate research value is still:
 
 ```text
-small creator breakout -> why packaging worked -> George-specific twist -> filmable idea
+small creator breakout -> why packaging worked -> creator-specific angle -> filmable idea
 ```

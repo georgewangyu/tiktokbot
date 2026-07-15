@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import test from 'node:test';
-import { TikTokContentPostingClient, normalizePhotoPostMode } from '../src/tiktok.js';
+import {
+    TikTokContentPostingClient,
+    buildTikTokUploadPlan,
+    buildTikTokVideoSourceInfo,
+    normalizePhotoPostMode,
+    normalizeVideoPostMode,
+    uploadTikTokVideoFile,
+} from '../src/tiktok.js';
 
 test('normalizePhotoPostMode accepts TikTok photo post modes', () => {
     assert.equal(normalizePhotoPostMode('direct post'), 'DIRECT_POST');
@@ -137,4 +147,88 @@ test('fetchPostStatus sends publish_id to status endpoint', async () => {
     } finally {
         globalThis.fetch = originalFetch;
     }
+});
+
+test('buildTikTokUploadPlan keeps small files whole and chunks large files', () => {
+    assert.deepEqual(buildTikTokUploadPlan(4 * 1024 * 1024), {
+        videoSize: 4 * 1024 * 1024,
+        chunkSize: 4 * 1024 * 1024,
+        totalChunkCount: 1,
+    });
+    const large = buildTikTokUploadPlan(200 * 1024 * 1024);
+    assert.equal(large.chunkSize, 64 * 1024 * 1024);
+    assert.equal(large.totalChunkCount, 3);
+    assert.throws(() => buildTikTokUploadPlan(0), /positive integer/);
+});
+
+test('initVideoPost selects direct and inbox endpoints', async () => {
+    const originalFetch = globalThis.fetch;
+    const requests = [];
+    try {
+        globalThis.fetch = async (url, options) => {
+            requests.push({ url: String(url), body: JSON.parse(options.body) });
+            return new Response(JSON.stringify({
+                data: { publish_id: 'v_test', upload_url: 'https://upload.test/video' },
+                error: { code: 'ok', message: '' },
+            }), { status: 200, headers: { 'content-type': 'application/json' } });
+        };
+        const client = new TikTokContentPostingClient({ accessToken: 'token', baseUrl: 'https://open.test' });
+        await client.initVideoPost({
+            videoSize: 10_000,
+            title: 'Caption #tag',
+            privacyLevel: 'SELF_ONLY',
+        });
+        await client.initVideoPost({
+            videoUrl: 'https://static.example.com/video.mp4',
+            postMode: 'MEDIA_UPLOAD',
+        });
+
+        assert.equal(requests[0].url, 'https://open.test/v2/post/publish/video/init/');
+        assert.equal(requests[0].body.post_info.title, 'Caption #tag');
+        assert.deepEqual(requests[0].body.source_info, {
+            source: 'FILE_UPLOAD',
+            video_size: 10_000,
+            chunk_size: 10_000,
+            total_chunk_count: 1,
+        });
+        assert.equal(requests[1].url, 'https://open.test/v2/post/publish/inbox/video/init/');
+        assert.equal(requests[1].body.post_info, undefined);
+        assert.deepEqual(requests[1].body.source_info, {
+            source: 'PULL_FROM_URL',
+            video_url: 'https://static.example.com/video.mp4',
+        });
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('uploadTikTokVideoFile sends a complete local file with byte range headers', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tiktokbot-upload-'));
+    const filePath = join(root, 'video.mp4');
+    await writeFile(filePath, Buffer.from('video-bytes'));
+    const requests = [];
+    try {
+        const result = await uploadTikTokVideoFile({
+            uploadUrl: 'https://upload.test/video',
+            filePath,
+            fetchImpl: async (url, options) => {
+                requests.push({ url, options });
+                return new Response('', { status: 201 });
+            },
+        });
+        assert.equal(result.bytesUploaded, 11);
+        assert.equal(result.totalChunkCount, 1);
+        assert.equal(requests[0].options.headers['Content-Range'], 'bytes 0-10/11');
+        assert.equal(requests[0].options.headers['Content-Type'], 'video/mp4');
+        assert.equal(Buffer.from(requests[0].options.body).toString(), 'video-bytes');
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test('normalizeVideoPostMode and URL validation reject unsafe values', () => {
+    assert.equal(normalizeVideoPostMode('direct post'), 'DIRECT_POST');
+    assert.equal(normalizeVideoPostMode('media-upload'), 'MEDIA_UPLOAD');
+    assert.throws(() => normalizeVideoPostMode('browser'), /Invalid video post mode/);
+    assert.throws(() => buildTikTokVideoSourceInfo({ videoUrl: 'http://example.com/video.mp4' }), /must use https/);
 });

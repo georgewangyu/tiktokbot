@@ -171,7 +171,7 @@ node src/cli.js find "devlife" \
 Inspect one creator:
 
 ```bash
-node src/cli.js user snackoverflowgeorge
+node src/cli.js user example_creator
 ```
 
 Inspect the OAuth-authorized account:
@@ -203,6 +203,51 @@ Check Content Posting API creator settings for the authorized account:
 ```bash
 node src/cli.js posting-info
 ```
+
+Upload a local video to TikTok's creator inbox for native editing and final
+posting in the mobile app:
+
+```bash
+node src/cli.js video-post ./final-video.mp4 --mode MEDIA_UPLOAD --dry-run
+node src/cli.js video-post ./final-video.mp4 \
+  --mode MEDIA_UPLOAD
+```
+
+Direct Post a private/self-only video for an API smoke test:
+
+```bash
+node src/cli.js video-post ./final-video.mp4 \
+  --mode DIRECT_POST \
+  --title 'Caption text #topic' \
+  --privacy-level SELF_ONLY
+```
+
+Public Direct Post requires explicit approval of the exact video and caption:
+
+```bash
+node src/cli.js video-post ./final-video.mp4 \
+  --mode DIRECT_POST \
+  --title 'Approved caption #topic' \
+  --privacy-level PUBLIC_TO_EVERYONE \
+  --confirm-public
+```
+
+The command accepts local MP4/MOV/WebM files using TikTok's chunked
+`FILE_UPLOAD` flow. It also accepts an HTTPS URL from a domain or URL prefix
+verified in the TikTok developer app:
+
+```bash
+node src/cli.js video-post \
+  'https://verified.example.com/tiktok/final-video.mp4' \
+  --mode MEDIA_UPLOAD
+```
+
+`MEDIA_UPLOAD` sends the video to the TikTok inbox and still requires native
+app completion. `DIRECT_POST` uses the selected caption/privacy controls, but
+TikTok restricts unaudited API clients to private visibility. The CLI refreshes
+an expired posting token once, saves the rotated token values, uploads the
+video, and polls `post-status` by default. Use `--no-wait` only when another
+operator will track the returned `publishId`.
 
 Initialize a static TikTok photo carousel from verified public JPEG/WebP URLs:
 
@@ -292,7 +337,9 @@ engagement_proxy = (likes + comments * 5 + shares * 8) / views
 
 Default ranking prefers creator-baseline outliers, then views/follower, then engagement proxy.
 
-For `my-outliers`, the baseline is based on the authorized account's recent videos. This is the official-API equivalent of the useful part of `youtubebot`, but scoped to George's own TikTok account.
+For `my-outliers`, the baseline is based on the authorized account's recent
+videos. This is the official-API equivalent of the useful part of `youtubebot`,
+but scoped to the OAuth-authorized TikTok account.
 
 ## Manual Worksheet Columns
 
@@ -312,10 +359,11 @@ See `examples/manual-breakouts.csv`.
 
 - Research API windows should stay at 30 days or less.
 - Research API approval is the broad-discovery blocker, not local code.
-- Display API OAuth is the practical official path for George-owned analytics.
+- Display API OAuth is the practical official path for authorized-account analytics.
 - TikTok Content Posting API is separate from discovery. It supports direct or
-  draft photo posting through verified public URLs after posting scopes are
-  approved and the user reauthorizes the app.
+  inbox video upload from local files, URL-based video ingest from verified
+  prefixes, and direct or draft photo posting after posting scopes are approved
+  and the user reauthorizes the app.
 
 ## Goals
 

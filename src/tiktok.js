@@ -1,6 +1,8 @@
 import { loadApiConfig } from './credentials.js';
 import { fetchClientAccessToken } from './oauth.js';
 import { toNumber } from './scoring.js';
+import { open, stat } from 'fs/promises';
+import { extname, resolve } from 'path';
 
 const DEFAULT_VIDEO_FIELDS = [
     'id',
@@ -292,6 +294,79 @@ export class TikTokContentPostingClient {
         return page?.data || {};
     }
 
+    async initVideoPost({
+        videoSize,
+        videoUrl,
+        postMode = 'DIRECT_POST',
+        title = '',
+        privacyLevel = 'SELF_ONLY',
+        disableComment = false,
+        disableDuet = false,
+        disableStitch = false,
+        videoCoverTimestampMs = 0,
+        preferredChunkSize,
+    }) {
+        const mode = normalizeVideoPostMode(postMode);
+        const sourceInfo = buildTikTokVideoSourceInfo({
+            videoSize,
+            videoUrl,
+            preferredChunkSize,
+        });
+        const body = { source_info: sourceInfo };
+
+        if (mode === 'DIRECT_POST') {
+            body.post_info = {
+                title: String(title || ''),
+                privacy_level: privacyLevel,
+                disable_comment: Boolean(disableComment),
+                disable_duet: Boolean(disableDuet),
+                disable_stitch: Boolean(disableStitch),
+                video_cover_timestamp_ms: Number(videoCoverTimestampMs) || 0,
+            };
+        }
+
+        const endpoint = mode === 'DIRECT_POST'
+            ? '/v2/post/publish/video/init/'
+            : '/v2/post/publish/inbox/video/init/';
+        const page = await this.request(endpoint, {
+            method: 'POST',
+            body,
+        });
+        return page?.data || {};
+    }
+
+    async createVideoPostFromFile({ filePath, fetchImpl = globalThis.fetch, ...options }) {
+        const file = await inspectTikTokVideoFile(filePath);
+        const plan = buildTikTokUploadPlan(file.size, options.preferredChunkSize);
+        const initialized = await this.initVideoPost({
+            ...options,
+            videoSize: file.size,
+        });
+        if (!initialized.publish_id || !initialized.upload_url) {
+            throw new Error(`TikTok video init response is missing publish_id or upload_url: ${JSON.stringify(initialized)}`);
+        }
+
+        const upload = await uploadTikTokVideoFile({
+            uploadUrl: initialized.upload_url,
+            filePath: file.path,
+            contentType: file.contentType,
+            chunkSize: plan.chunkSize,
+            fetchImpl,
+        });
+        return { ...initialized, file, upload };
+    }
+
+    async waitForPost({ publishId, pollIntervalMs = 10_000, timeoutMs = 900_000 }) {
+        const deadline = Date.now() + timeoutMs;
+        let lastStatus = null;
+        while (Date.now() <= deadline) {
+            lastStatus = await this.fetchPostStatus({ publishId });
+            if (isTikTokPostTerminal(lastStatus)) return lastStatus;
+            await new Promise((resolvePromise) => setTimeout(resolvePromise, pollIntervalMs));
+        }
+        throw new Error(`Timed out waiting for TikTok post ${publishId}: ${JSON.stringify(lastStatus)}`);
+    }
+
     async fetchPostStatus({ publishId }) {
         if (!publishId) throw new Error('Missing publish id');
         const page = await this.request('/v2/post/publish/status/fetch/', {
@@ -318,6 +393,129 @@ export function normalizePhotoPostMode(value) {
     const mode = String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
     if (mode === 'DIRECT_POST' || mode === 'MEDIA_UPLOAD') return mode;
     throw new Error(`Invalid photo post mode: ${value}. Use DIRECT_POST or MEDIA_UPLOAD.`);
+}
+
+export function normalizeVideoPostMode(value) {
+    const mode = String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    if (mode === 'DIRECT_POST' || mode === 'MEDIA_UPLOAD') return mode;
+    throw new Error(`Invalid video post mode: ${value}. Use DIRECT_POST or MEDIA_UPLOAD.`);
+}
+
+export function buildTikTokUploadPlan(videoSize, preferredChunkSize = 64 * 1024 * 1024) {
+    const size = Number(videoSize);
+    if (!Number.isSafeInteger(size) || size <= 0) {
+        throw new Error(`TikTok video size must be a positive integer; got ${videoSize}`);
+    }
+    if (size > 4 * 1024 * 1024 * 1024) {
+        throw new Error('TikTok video files must be 4 GB or smaller.');
+    }
+
+    const minChunk = 5 * 1024 * 1024;
+    const maxChunk = 64 * 1024 * 1024;
+    const maxFinalChunk = 128 * 1024 * 1024;
+    if (size <= maxFinalChunk) {
+        return { videoSize: size, chunkSize: size, totalChunkCount: 1 };
+    }
+
+    const chunkSize = Math.min(maxChunk, Math.max(minChunk, Number(preferredChunkSize) || maxChunk));
+    const totalChunkCount = Math.floor(size / chunkSize);
+    const finalChunkSize = size - (chunkSize * (totalChunkCount - 1));
+    if (finalChunkSize > maxFinalChunk) {
+        throw new Error(`TikTok final upload chunk would exceed 128 MB: ${finalChunkSize} bytes`);
+    }
+    return { videoSize: size, chunkSize, totalChunkCount };
+}
+
+export function buildTikTokVideoSourceInfo({ videoSize, videoUrl, preferredChunkSize } = {}) {
+    if (videoUrl) {
+        const parsed = new URL(videoUrl);
+        if (parsed.protocol !== 'https:') {
+            throw new Error(`TikTok video URL must use https: ${videoUrl}`);
+        }
+        return { source: 'PULL_FROM_URL', video_url: parsed.toString() };
+    }
+
+    const plan = buildTikTokUploadPlan(videoSize, preferredChunkSize);
+    return {
+        source: 'FILE_UPLOAD',
+        video_size: plan.videoSize,
+        chunk_size: plan.chunkSize,
+        total_chunk_count: plan.totalChunkCount,
+    };
+}
+
+export async function inspectTikTokVideoFile(filePath) {
+    const path = resolve(String(filePath || ''));
+    const details = await stat(path).catch(() => null);
+    if (!details?.isFile()) throw new Error(`TikTok video file does not exist: ${path}`);
+
+    const contentTypes = {
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime',
+        '.webm': 'video/webm',
+    };
+    const contentType = contentTypes[extname(path).toLowerCase()];
+    if (!contentType) {
+        throw new Error('TikTok video must be an MP4, MOV, or WebM file.');
+    }
+    buildTikTokUploadPlan(details.size);
+    return { path, size: details.size, contentType };
+}
+
+export async function uploadTikTokVideoFile({
+    uploadUrl,
+    filePath,
+    contentType,
+    chunkSize,
+    fetchImpl = globalThis.fetch,
+}) {
+    if (!uploadUrl) throw new Error('Missing TikTok upload URL');
+    const file = await inspectTikTokVideoFile(filePath);
+    const plan = buildTikTokUploadPlan(file.size, chunkSize);
+    const handle = await open(file.path, 'r');
+    let uploadedBytes = 0;
+
+    try {
+        for (let index = 0; index < plan.totalChunkCount; index += 1) {
+            const firstByte = uploadedBytes;
+            const isFinal = index === plan.totalChunkCount - 1;
+            const bytesToRead = isFinal ? file.size - uploadedBytes : plan.chunkSize;
+            const buffer = Buffer.allocUnsafe(bytesToRead);
+            const { bytesRead } = await handle.read(buffer, 0, bytesToRead, firstByte);
+            if (bytesRead !== bytesToRead) {
+                throw new Error(`Could not read TikTok upload chunk ${index + 1}; expected ${bytesToRead} bytes, got ${bytesRead}`);
+            }
+            const lastByte = firstByte + bytesRead - 1;
+            const response = await fetchImpl(uploadUrl, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': contentType || file.contentType,
+                    'Content-Length': String(bytesRead),
+                    'Content-Range': `bytes ${firstByte}-${lastByte}/${file.size}`,
+                },
+                body: buffer,
+            });
+            const expectedStatus = isFinal ? 201 : 206;
+            if (response.status !== expectedStatus) {
+                const detail = await response.text().catch(() => '');
+                throw new Error(`TikTok video upload chunk ${index + 1} failed: ${response.status} ${response.statusText}${detail ? ` - ${detail}` : ''}`);
+            }
+            uploadedBytes += bytesRead;
+        }
+    } finally {
+        await handle.close();
+    }
+
+    return {
+        bytesUploaded: uploadedBytes,
+        chunkSize: plan.chunkSize,
+        totalChunkCount: plan.totalChunkCount,
+    };
+}
+
+function isTikTokPostTerminal(status) {
+    const value = String(status?.status || '').toUpperCase();
+    return ['PUBLISH_COMPLETE', 'SEND_TO_USER_INBOX', 'FAILED', 'PUBLISH_FAILED'].includes(value);
 }
 
 function validatePhotoPostInput({ photoUrls, title, description, coverIndex }) {

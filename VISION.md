@@ -1,6 +1,6 @@
 # TikTokBot Vision
 
-`tiktokbot` should help George inspect TikTok breakout patterns without
+`tiktokbot` should help operators inspect TikTok breakout patterns without
 pretending the platform exposes broad, stable public discovery to ordinary
 operators.
 
