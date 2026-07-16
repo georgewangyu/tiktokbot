@@ -166,9 +166,13 @@ export class TikTokDisplayClient {
             body: body ? JSON.stringify(body) : undefined,
         });
         const json = await response.json().catch(() => ({}));
-        if (!response.ok) {
+        const errorCode = json?.error?.code;
+        if (!response.ok || (errorCode && errorCode !== 'ok')) {
             const message = json?.error?.message || json?.error_description || json?.message || `${response.status} ${response.statusText}`;
-            throw new Error(`TikTok Display API error for ${path}: ${message}`);
+            const error = new Error(`TikTok Display API error for ${path}: ${message || errorCode}`);
+            error.status = response.status;
+            error.payload = json;
+            throw error;
         }
         return json;
     }

@@ -126,6 +126,33 @@ Refresh later:
 node src/cli.js refresh-token --save
 ```
 
+### Token Lifecycle and Automatic Recovery
+
+TikTok's user access token is valid for 24 hours and its refresh token is
+normally valid for 365 days. A successful OAuth exchange or refresh now saves
+non-secret lifecycle metadata alongside the private tokens:
+
+```env
+TIKTOK_USER_TOKEN_UPDATED_AT=...
+TIKTOK_USER_ACCESS_TOKEN_EXPIRES_AT=...
+TIKTOK_USER_REFRESH_TOKEN_EXPIRES_AT=...
+```
+
+TikTokBot automatically refreshes and retries once for official own-account
+analytics and posting commands when either:
+
+- the saved access-token expiry is within one minute; or
+- TikTok rejects the access token as invalid or expired.
+
+The refresh response can rotate the refresh token, so the bot saves the full
+response before retrying. It never retries more than once. If the refresh token
+is expired, revoked, or belongs to a different app, run `oauth-login` again and
+authorize the account.
+
+Older token files may not contain lifecycle timestamps. They remain supported:
+the first invalid-token response triggers the same refresh-and-retry path, then
+the bot adds the timestamps for subsequent checks.
+
 ## Optional Path: Content Posting API
 
 Use this when posting videos or static photo carousels from `tiktokbot`.

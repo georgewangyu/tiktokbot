@@ -72,6 +72,9 @@ export function loadUserTokens() {
         accessToken: getEnv('TIKTOK_USER_ACCESS_TOKEN') || getEnv('TIKTOK_ACCESS_TOKEN'),
         refreshToken: getEnv('TIKTOK_USER_REFRESH_TOKEN') || getEnv('TIKTOK_REFRESH_TOKEN'),
         scope: getEnv('TIKTOK_USER_SCOPE'),
+        updatedAt: getEnv('TIKTOK_USER_TOKEN_UPDATED_AT'),
+        accessTokenExpiresAt: getEnv('TIKTOK_USER_ACCESS_TOKEN_EXPIRES_AT'),
+        refreshTokenExpiresAt: getEnv('TIKTOK_USER_REFRESH_TOKEN_EXPIRES_AT'),
     };
 }
 

@@ -3,12 +3,13 @@
 import { Command } from 'commander';
 import { stdin, stdout } from 'process';
 import { createInterface } from 'readline/promises';
-import { getDefaultEnvFilePath, getEnv, loadApiConfig, loadOAuthConfig, loadUserTokens, loadWebConfig, writeEnvValues } from './credentials.js';
+import { getDefaultEnvFilePath, getEnv, loadApiConfig, loadOAuthConfig, loadUserTokens, loadWebConfig } from './credentials.js';
 import { findMyOutliers, findResearchOutliers, rankRows, scoreManualFile } from './finder.js';
 import { buildAuthorizationUrl, CONTENT_POSTING_SCOPES, createPkcePair, DEFAULT_DISPLAY_SCOPES, exchangeCodeForToken, fetchClientAccessToken, parseOAuthCallbackInput, refreshUserAccessToken } from './oauth.js';
 import { printResults } from './output.js';
 import { collectWithPythonBridge } from './pythonBridge.js';
 import { buildTikTokVideoSourceInfo, getDisplayUserFields, inspectTikTokVideoFile, normalizeVideoPostMode, TikTokContentPostingClient, TikTokDisplayClient, TikTokResearchClient } from './tiktok.js';
+import { saveUserTokenEnv, withUserAccessToken } from './userSession.js';
 import { withTikTokWebClient } from './web.js';
 
 const program = new Command();
@@ -40,21 +41,15 @@ function parseScopes(value, { includePosting = false } = {}) {
 }
 
 async function withPostingClient(operation) {
-    const tokens = loadUserTokens();
-    const run = (accessToken) => operation(new TikTokContentPostingClient({ accessToken }));
-    try {
-        return await run(tokens.accessToken);
-    } catch (error) {
-        const errorCode = error?.payload?.error?.code;
-        const tokenExpired = error.status === 401
-            || errorCode === 'access_token_invalid'
-            || /access token is invalid|access_token.*expired/i.test(error.message);
-        if (!tokenExpired || !tokens.refreshToken) throw error;
+    return withUserAccessToken((accessToken) => (
+        operation(new TikTokContentPostingClient({ accessToken }))
+    ));
+}
 
-        const refreshed = await refreshUserAccessToken({ refreshToken: tokens.refreshToken });
-        saveUserTokenEnv(refreshed, getDefaultEnvFilePath());
-        return run(refreshed.access_token);
-    }
+async function withDisplayClient(operation) {
+    return withUserAccessToken((accessToken) => (
+        operation(new TikTokDisplayClient({ accessToken }))
+    ));
 }
 
 async function collectWebVideos({ backend = 'auto', command, query, maxResults, msToken, browser, headless, muteAudio }) {
@@ -410,8 +405,9 @@ program
     .action(async (options) => {
         try {
             const tokens = loadUserTokens();
-            const client = new TikTokDisplayClient({ accessToken: tokens.accessToken });
-            const me = await client.getMe({ fields: getDisplayUserFields(options.scope || tokens.scope) });
+            const me = await withDisplayClient((client) => (
+                client.getMe({ fields: getDisplayUserFields(options.scope || tokens.scope) })
+            ));
             console.log(JSON.stringify(me, null, 2));
         } catch (error) {
             console.error(`Error: ${error.message}`);
@@ -426,9 +422,9 @@ program
     .option('--format <format>', 'Output format: table, json, jsonl', 'json')
     .action(async (options) => {
         try {
-            const tokens = loadUserTokens();
-            const client = new TikTokDisplayClient({ accessToken: tokens.accessToken });
-            const videos = await client.listVideos({ maxResults: options.maxResults });
+            const videos = await withDisplayClient((client) => (
+                client.listVideos({ maxResults: options.maxResults })
+            ));
             printResults(videos.map((video) => ({
                 ...video,
                 followers: null,
@@ -454,9 +450,8 @@ program
     .option('--format <format>', 'Output format: table, json, jsonl', 'table')
     .action(async (options) => {
         try {
-            const tokens = loadUserTokens();
-            const results = await findMyOutliers({
-                accessToken: tokens.accessToken,
+            const results = await withDisplayClient((client) => findMyOutliers({
+                client,
                 maxResults: options.maxResults,
                 baselineVideos: options.baselineVideos,
                 minBaselineVideos: options.minBaselineVideos,
@@ -464,7 +459,7 @@ program
                 minOutlierScore: options.minOutlier,
                 limit: options.limit,
                 sort: options.sort,
-            });
+            }));
             printResults(results, options.format);
         } catch (error) {
             console.error(`Error: ${error.message}`);
@@ -485,8 +480,7 @@ program
     .action(async (options) => {
         try {
             const tokens = loadUserTokens();
-            const client = new TikTokDisplayClient({ accessToken: tokens.accessToken });
-            const [me, results] = await Promise.all([
+            const [me, results] = await withDisplayClient((client) => Promise.all([
                 client.getMe({ fields: getDisplayUserFields(tokens.scope) }),
                 findMyOutliers({
                     client,
@@ -498,7 +492,7 @@ program
                     limit: options.limit,
                     sort: 'outlier',
                 }),
-            ]);
+            ]));
 
             if (options.format === 'json') {
                 console.log(JSON.stringify({ account: me, outliers: results }, null, 2));
@@ -667,6 +661,7 @@ program
     .description('Show resolved non-secret TikTok config state')
     .action(() => {
         const api = loadApiConfig();
+        const tokens = loadUserTokens();
         console.log(JSON.stringify({
             baseUrl: api.baseUrl,
             hasClientKey: Boolean(getEnv('TIKTOK_CLIENT_KEY')),
@@ -675,6 +670,9 @@ program
             hasUserAccessToken: Boolean(getEnv('TIKTOK_USER_ACCESS_TOKEN') || getEnv('TIKTOK_ACCESS_TOKEN')),
             hasUserRefreshToken: Boolean(getEnv('TIKTOK_USER_REFRESH_TOKEN') || getEnv('TIKTOK_REFRESH_TOKEN')),
             userScope: getEnv('TIKTOK_USER_SCOPE') || null,
+            userTokenUpdatedAt: tokens.updatedAt || null,
+            userAccessTokenExpiresAt: tokens.accessTokenExpiresAt || null,
+            userRefreshTokenExpiresAt: tokens.refreshTokenExpiresAt || null,
             hasMsToken: Boolean(getEnv('TIKTOK_MS_TOKEN') || getEnv('ms_token')),
             muteAudio: loadWebConfig().muteAudio,
             pythonBin: getEnv('TIKTOK_PYTHON_BIN') || 'python3',
@@ -706,12 +704,4 @@ function printTokenSummary(token, { envFile = '', printEnv = false } = {}) {
     console.log(envFile ? `\nEnv values for ${envFile}:` : '\nSuggested env additions:');
     if (token.access_token) console.log(`TIKTOK_USER_ACCESS_TOKEN=${token.access_token}`);
     if (token.refresh_token) console.log(`TIKTOK_USER_REFRESH_TOKEN=${token.refresh_token}`);
-}
-
-function saveUserTokenEnv(token, envFile) {
-    return writeEnvValues(envFile, {
-        TIKTOK_USER_ACCESS_TOKEN: token.access_token,
-        TIKTOK_USER_REFRESH_TOKEN: token.refresh_token,
-        TIKTOK_USER_SCOPE: token.scope,
-    });
 }

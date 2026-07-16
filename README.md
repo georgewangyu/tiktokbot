@@ -136,6 +136,15 @@ Refresh a user token:
 node src/cli.js refresh-token --save
 ```
 
+TikTok user access tokens last 24 hours; refresh tokens normally last 365
+days. TikTokBot records non-secret token lifecycle timestamps whenever OAuth or
+refresh saves tokens. Official own-account commands (`me`, `my-videos`,
+`my-outliers`, and `check`) and posting commands automatically refresh a token
+that is near expiry or rejected as invalid, save any rotated refresh token, and
+retry once. A second authentication failure remains visible instead of
+looping. Use the manual command above if the refresh token itself is revoked,
+expired, or tied to different app credentials.
+
 ## Usage
 
 Score a manually collected worksheet:
